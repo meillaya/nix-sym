@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    name: flake / linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: nix flake check
+        run: nix flake check
+      - name: Build package
+        run: nix build .#nix-sym
+
+  integration:
+    name: cores / linux
+    runs-on: ubuntu-24.04
+    env:
+      NIX_SYM_REQUIRE_CORE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Integration tests
+        run: nix develop --impure --command bash scripts/test-integration.sh
+
+  format:
+    name: format / linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: clang-format
+        run: >
+          nix develop --impure --command
+          bash -c 'clang-format --dry-run --Werror src/*.cpp src/*.hpp tests/*.cpp tests/unit/*.cpp'

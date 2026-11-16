@@ -1,0 +1,15 @@
+/build/
+/result
+/result-*
+/.direnv/
+/.devenv/
+/.devenv-*/
+/.cache/
+/.cache-nix/
+/.cache-nixpkgs-review/
+/.local/
+/coverage/
+*.core
+*.zst
+
+/.scratch/

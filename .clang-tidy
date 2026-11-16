@@ -1,0 +1,7 @@
+Checks: >
+  -*,clang-analyzer-*,-clang-analyzer-cplusplus*,bugprone-*,performance-*,
+  modernize-*,-modernize-use-trailing-return-type,readability-*,
+  -readability-magic-numbers,-readability-identifier-length
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/.*'
+FormatStyle: file

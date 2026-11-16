@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/meillaya/nix-sym/actions/workflows/ci.yml/badge.svg)](https://github.com/meillaya/nix-sym/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENCE)
+[![Release](https://img.shields.io/github/v/release/meillaya/nix-sym)](https://github.com/meillaya/nix-sym/releases)
 
 `nix-sym` turns a Linux core dump from a Nix-built process into a resolved
 backtrace without hand-assembling `debug-file-directory` paths.
@@ -150,9 +151,11 @@ Fetches never build by default. Pass `--build-missing` to allow
 
 Resolutions are cached by build id in `$XDG_CACHE_HOME/nix-sym`. Source
 archives and overlays are cached by source and overlay identity. A second run
-uses the cache without calling Nix. `nix copy` verifies cache signatures; an
-unsigned file cache needs a trusted public key or `require-sigs = false` in the
-Nix configuration used for the command.
+reuses resolved entries and does not call Nix for them. Missing entries are
+retried unless `--no-fetch` is used; with `--no-fetch`, a warm cache avoids Nix
+entirely. `nix copy` verifies cache signatures; an unsigned file cache needs a
+trusted public key or `require-sigs = false` in the Nix configuration used for
+the command.
 
 ## Source reconstruction
 

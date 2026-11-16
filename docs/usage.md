@@ -126,8 +126,8 @@ nix-sym --core core.123 --json --no-cache
 ```
 
 The default cache is `$XDG_CACHE_HOME/nix-sym`, or `~/.cache/nix-sym` when
-`XDG_CACHE_HOME` is unset. A second run with the same core and store state does
-not call Nix.
+`XDG_CACHE_HOME` is unset. A second run with `--no-fetch` and a warm cache does
+not call Nix. With fetching enabled, unresolved entries are retried.
 
 The cache keeps:
 

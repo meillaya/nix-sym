@@ -80,8 +80,14 @@ test_cpp() {
   fi
   debug_file=$(jq -r '[.modules[] | select(.status == "resolved") | .debug_file] | first // empty' "$json")
   pc0=$(jq -r '.threads[0].frames[0].lookup_pc' "$json")
-  if command -v addr2line >/dev/null 2>&1 && [[ -n "$debug_file" ]]; then
-    if ! addr2line -f -i -C -e "$debug_file" "$pc0" 2>/dev/null | grep -q 'leaf'; then
+  module_start=""
+  if command -v eu-stack >/dev/null 2>&1; then
+    module_start=$(eu-stack -l --core "$core" 2>/dev/null |
+      awk 'NR == 2 { split($1, parts, "-"); print parts[1]; exit }')
+  fi
+  if command -v addr2line >/dev/null 2>&1 && [[ -n "$debug_file" && -n "$module_start" ]]; then
+    relative=$(python3 -c 'import sys; print(hex(int(sys.argv[1], 16) - int(sys.argv[2], 16)))' "$pc0" "$module_start")
+    if ! addr2line -f -i -C -e "$debug_file" "$relative" 2>/dev/null | grep -q 'leaf'; then
       fail "$name: addr2line differential did not find leaf"
     fi
   fi

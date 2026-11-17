@@ -41,8 +41,8 @@ paths.
   z-encoded names.
 - It maps `/build/...` paths back to the source archive or directory, including
   files changed by patches.
-- It attaches to a live process with `--pid` and symbolizes a coreless
-  module-relative address list with `--stack`.
+- It attaches to a live process with `--pid` and symbolizes a coreless address
+  list with `--stack`, including runtime addresses and build-id-only records.
 - It can fall back to a debuginfod server for cores from another machine.
 - It emits a gdb init file with the right debug directories and source
   substitutions.
@@ -101,20 +101,27 @@ REGEX` keeps frames with a matching demangled name. `--no-inline` and
 `--no-demangle` turn off the two enrichment passes.
 
 `--pid PID` attaches to a live process with ptrace. It uses the same module
-resolution, source mapping, and JSON output. The process must be dumpable and
-the caller must have permission to trace it.
+resolution, source mapping, and JSON output. It also reports each thread's
+`/proc/<pid>/task/<tid>/comm` name. The process must be dumpable and the caller
+must have permission to trace it.
 
-`--stack FILE` reads module-relative addresses for cores or crash reports that
-contain no memory image:
+`--stack FILE` reads module-relative or runtime addresses for cores or crash
+reports that contain no memory image:
 
 ```
-# MODULE ADDRESS [BUILD-ID]
+# link-time form
 /nix/store/.../bin/demo 0x1187 c36966051dcc87a30f7ac34a81287ee60a9e1df1
-/nix/store/.../bin/demo 0x1079
+# runtime form: subtract this load base for lookup
+/nix/store/.../bin/demo 0x555555555187 @ 0x555555554000
+# build-id-only form; resolve the executable through debuginfod
+c36966051dcc87a30f7ac34a81287ee60a9e1df1 0x555555555187 @ 0x555555554000
+# reuse the previous module
+0x1079
 ```
 
-Addresses are link-time addresses. Subtract the load base from a runtime PC
-before writing the file. A one-token line reuses the previous module.
+A one-token line reuses the previous module. Build-id-only records need a
+debuginfod server or a warning is emitted. Runtime records keep the supplied
+runtime address in `pc` and put the link-time address in `lookup_pc`.
 
 A core from `systemd-coredump` is usually compressed. Pass the `.zst` file
 directly, pass a decompressed file, or use `coredumpctl`:
@@ -147,8 +154,10 @@ gdb -x nix-sym.gdb
 ```
 
 The generated file sets the resolved debug directories, source substitutions,
-and the core file. It disables debuginfod for that session so gdb does not
-prompt or download from a different server. Use `--no-extract` to skip source
+the executable, and the core file. It disables debuginfod for that session so
+gdb does not prompt or download from a different server. The `file` command is
+selected from the deepest frame's module, so gdb loads symbols for the crashing
+binary rather than the dynamic loader. Use `--no-extract` to skip source
 extraction; the file then contains comments for source mappings that are not
 materialized. Use `--gdb-init -` to write the script to stdout.
 
@@ -197,8 +206,13 @@ Nixpkgs 25.11 debug outputs contain, under `lib/debug/.build-id/<id>/`:
 
 `nix-sym` maps `/build/<sourceRoot>` to the source path, extracts archives with
 libarchive, and applies the overlay. Directory sources use a hardlink or copy
-merge when an overlay exists. Generated files and files from outside the source
-tree are reported with an unresolved source status rather than a guessed path.
+merge when an overlay exists. Generated files are reported as
+`source-generated-file` rather than a guessed path.
+
+Rust standard library paths such as `/rustc/<hash>/library/...` are mapped
+automatically when a rust-src tree is discoverable. `nix-sym` checks
+`NIX_SYM_RUST_SRC`, `RUST_SRC_PATH`, the running `rustc` sysroot, and rustup
+toolchains. An explicit `--source-dir` still wins.
 
 Debug outputs built before nixpkgs 25.11 have no `.source` links. They still
 provide symbols and line numbers, but source reconstruction is unavailable
@@ -212,7 +226,9 @@ GHC runtime stack unwinding. Rust v0 support covers the common subset of the man
 falls back to the raw name with a warning when it cannot parse a symbol.
 
 Read [docs/limitations.md](docs/limitations.md) before relying on it for a
-live process, a cross-machine core, or a package without a debug output.
+live process, a cross-machine core, or a package without a debug output. The
+second ten-core pass is in [docs/dogfood.md](docs/dogfood.md), and resolver
+timings are in [docs/performance.md](docs/performance.md).
 
 ## Development
 
@@ -224,12 +240,14 @@ scripts/test-integration.sh
 
 The integration script builds the fixture derivations, generates cores with
 `gcore`, and checks frames, inline information, source extraction, gdb source
-listing, caching, stdin input, live attach, stack input, Haskell demangling,
-and source overrides. Set `NIX_SYM_REQUIRE_CORE=1` in CI where a missing core
-must fail the job.
+listing, caching, stdin input, live attach, stack input (link-time, runtime,
+and reuse forms), Haskell demangling, source overrides, malformed debuginfod
+responses, and a 104-module synthetic core. Set `NIX_SYM_REQUIRE_CORE=1` in CI
+where a missing core must fail the job.
 
-`make sanitize` runs the ASan and UBSan suite. `make fuzz` runs the libFuzzer
-targets for the demanglers and JSON escaping.
+`make sanitize` runs the ASan and UBSan suite. `make fuzz` runs libFuzzer over
+the demanglers, JSON escaping, core parsing, archive extraction, and stack
+parsing. The aarch64 runtime evidence is in [docs/aarch64.md](docs/aarch64.md).
 
 The design is in [docs/design.md](docs/design.md). The first ten-core pass is
 in [docs/dogfood.md](docs/dogfood.md). The fixture programs are in

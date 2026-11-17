@@ -72,6 +72,23 @@ jobs:
       - name: Demangler and JSON fuzz targets
         run: nix develop .#fuzz --command bash scripts/check-fuzz.sh
 
+  aarch64:
+    name: aarch64-core / linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build symbolizer
+        run: nix build --no-link --print-out-paths .#nix-sym > /tmp/nix-sym-out
+      - name: Produce and verify an aarch64 core under QEMU
+        run: |
+          NIX_SYM="$(cat /tmp/nix-sym-out)/bin/nix-sym" \
+          nix shell nixpkgs#qemu nixpkgs#clang nixpkgs#lld nixpkgs#cpio nixpkgs#python3 \
+            -c bash scripts/aarch64-core.sh
+
   format:
     name: format / linux
     runs-on: ubuntu-24.04
@@ -84,4 +101,4 @@ jobs:
       - name: clang-format
         run: >
           nix develop .#format --command
-          bash -c 'clang-format --dry-run --Werror src/*.cpp src/*.hpp tests/*.cpp tests/unit/*.cpp'
+          bash -c 'clang-format --dry-run --Werror src/*.cpp src/*.hpp tests/*.cpp tests/unit/*.cpp fuzz/*.cpp'

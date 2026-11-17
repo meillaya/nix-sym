@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -145,6 +146,41 @@ std::string read_link(const std::string& path) {
   return ec ? std::string() : target.string();
 }
 
+std::string hex_value(std::uint64_t value) {
+  std::ostringstream out;
+  out << "0x" << std::hex << value;
+  return out.str();
+}
+
+std::string dwfl_error() {
+  const char* message = dwfl_errmsg(-1);
+  return message != nullptr ? std::string(message) : std::string("unknown libdwfl error");
+}
+
+// Read the thread name for a live process. /proc entries vanish when the
+// process exits mid-unwind, so a missing file is not an error here. Control
+// bytes are replaced so the name is safe to print in the text renderer.
+std::string read_thread_name(int pid, int tid) {
+  std::ifstream input("/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/comm",
+                      std::ios::binary);
+  if (!input) {
+    return {};
+  }
+  std::string name;
+  std::getline(input, name);
+  constexpr std::size_t kThreadNameLimit = 64;
+  if (name.size() > kThreadNameLimit) {
+    name.resize(kThreadNameLimit);
+  }
+  for (char& character : name) {
+    const unsigned char byte = static_cast<unsigned char>(character);
+    if (byte < 0x20 || byte == 0x7f) {
+      character = '?';
+    }
+  }
+  return name;
+}
+
 std::string debug_file_path(const std::string& debug_output, const std::string& build_id) {
   if (debug_output.empty() || build_id.size() < 2) {
     return {};
@@ -189,6 +225,9 @@ struct Session {
   std::vector<PendingModule> pending;
   std::regex filter;
   bool has_filter = false;
+  // Process id for live sessions; 0 for core and stack input. Used to read
+  // thread names and to report process-exit races differently.
+  int live_pid = 0;
 
   ~Session() {
     if (dwfl != nullptr) {
@@ -396,11 +435,24 @@ int thread_callback(Dwfl_Thread* thread, void* argument) {
   }
   ThreadInfo info;
   info.tid = tid;
+  if (session->live_pid > 0) {
+    info.name = read_thread_name(session->live_pid, tid);
+  }
   FrameCallbackState state{session, &info};
   int result = dwfl_thread_getframes(thread, frame_callback, &state);
-  if (result < 0 && info.frames.empty()) {
-    session->backtrace.warnings.push_back(
-        {"unwind-failed", {}, "could not unwind thread " + std::to_string(tid)});
+  if (result < 0) {
+    if (session->live_pid > 0) {
+      // The process can exit or the thread can be reaped while we unwind it.
+      // Keep the frames collected so far and report the race clearly.
+      session->backtrace.warnings.push_back(
+          {"live-thread-gone",
+           {},
+           "thread " + std::to_string(tid) + " disappeared while unwinding: " + dwfl_error() +
+               " (kept " + std::to_string(info.frames.size()) + " collected frame(s))"});
+    } else if (info.frames.empty()) {
+      session->backtrace.warnings.push_back(
+          {"unwind-failed", {}, "could not unwind thread " + std::to_string(tid)});
+    }
   }
   session->backtrace.threads.push_back(std::move(info));
   return DWARF_CB_OK;
@@ -547,8 +599,13 @@ bool init_session(Session& session, bool offline, bool live) {
 void unwind_threads(Session& session) {
   int threads = dwfl_getthreads(session.dwfl, thread_callback, &session);
   if (threads < 0) {
-    session.backtrace.warnings.push_back(
-        {"unwind-failed", {}, std::string("cannot enumerate threads: ") + dwfl_errmsg(-1)});
+    const std::string message = "cannot enumerate threads: " + dwfl_error();
+    if (session.live_pid > 0) {
+      session.backtrace.warnings.push_back(
+          {"live-thread-gone", {}, message + " (the process may have exited)"});
+    } else {
+      session.backtrace.warnings.push_back({"unwind-failed", {}, message});
+    }
   }
 }
 
@@ -636,6 +693,7 @@ Backtrace symbolize_pid(const Options& options, int pid, NixResolver& resolver,
   session.debuginfod = debuginfod;
   session.backtrace.core.path = "pid:" + std::to_string(pid);
   session.backtrace.core.pid = pid;
+  session.live_pid = pid;
   session.backtrace.core.exe = read_link("/proc/" + std::to_string(pid) + "/exe");
 
   if (!init_session(session, false, true)) {
@@ -668,6 +726,21 @@ Backtrace symbolize_pid(const Options& options, int pid, NixResolver& resolver,
   return finalize(session);
 }
 
+// Symbolize the addresses in a --stack description. Records are normally
+// module-relative (link-time) addresses because every reported ELF uses
+// dwfl_report_elf(base 0, add_p_vaddr=true). Two forms need extra handling:
+//
+//  * Runtime-address records ("MODULE RUNTIME @ LOAD_BASE" and
+//    "BUILD-ID RUNTIME @ LOAD_BASE") keep the address the user supplied in
+//    frame.pc and put the computed link-time address (runtime - load_base) in
+//    frame.lookup_pc. The JSON "pc" field therefore echoes the stack file and
+//    "lookup_pc" is the adjusted address, matching the meaning of those fields
+//    for core and live backtraces.
+//  * Build-id-only records have no module path. Each unique build id is
+//    resolved to an executable through debuginfod before modules are reported.
+//    When debuginfod is disabled or the fetch fails, a
+//    "stack-build-id-unresolved" warning is recorded and that record is
+//    skipped; the remaining records still symbolize.
 Backtrace symbolize_stack(const Options& options, const std::vector<StackRecord>& records,
                           NixResolver& resolver, SourceResolver& sources,
                           DebuginfodClient* debuginfod) {
@@ -681,24 +754,74 @@ Backtrace symbolize_stack(const Options& options, const std::vector<StackRecord>
     return finalize(session);
   }
 
+  // Resolve build-id-only records to local executables before reporting any
+  // module. Failures are warnings, never fatal.
+  std::unordered_map<std::string, std::string> executable_paths;
+  for (const auto& record : records) {
+    if (!record.module.empty() || record.build_id.empty()) {
+      continue;
+    }
+    if (executable_paths.find(record.build_id) != executable_paths.end()) {
+      continue;
+    }
+    if (debuginfod == nullptr || !debuginfod->enabled()) {
+      session.backtrace.warnings.push_back(
+          {"stack-build-id-unresolved", record.build_id,
+           "cannot resolve a build-id-only stack record: debuginfod is disabled"});
+      continue;
+    }
+    DebuginfodResult fetched = debuginfod->find_executable(record.build_id);
+    if (!fetched.ok) {
+      session.backtrace.warnings.push_back(
+          {"stack-build-id-unresolved", record.build_id,
+           "cannot fetch the executable for build id: " + fetched.error});
+      continue;
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(fetched.path, ec)) {
+      session.backtrace.warnings.push_back(
+          {"stack-build-id-unresolved", record.build_id,
+           "debuginfod returned a non-regular executable path: " + fetched.path});
+      continue;
+    }
+    executable_paths[record.build_id] = fetched.path;
+  }
+
   dwfl_report_begin(session.dwfl);
   std::unordered_map<std::string, Dwfl_Module*> reported_modules;
-  std::unordered_map<std::string, std::string> record_paths;
-  for (const auto& record : records) {
-    std::string module_path = resolve_relative_path(record.module, options.cwd);
-    record_paths[record.module] = module_path;
+  std::vector<std::string> record_paths(records.size());
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    const StackRecord& record = records[index];
+    std::string module_path;
+    if (!record.module.empty()) {
+      module_path = resolve_relative_path(record.module, options.cwd);
+    } else {
+      const auto resolved = executable_paths.find(record.build_id);
+      if (resolved == executable_paths.end()) {
+        continue; // A stack-build-id-unresolved warning was recorded above.
+      }
+      module_path = resolved->second;
+    }
+    record_paths[index] = module_path;
     if (reported_modules.find(module_path) != reported_modules.end()) {
       continue;
     }
-    if (!std::filesystem::exists(module_path)) {
-      session.backtrace.warnings.push_back(
-          {"module-file-missing", record.module, "stack module does not exist"});
+
+    const bool from_build_id = record.module.empty();
+    const std::string warning_module = from_build_id ? record.build_id : record.module;
+    const char* warning_code = from_build_id ? "stack-build-id-unresolved" : "module-file-missing";
+    const auto report_failure = [&](const std::string& message) {
+      session.backtrace.warnings.push_back({warning_code, warning_module, message});
+    };
+
+    std::error_code ec;
+    if (!std::filesystem::exists(module_path, ec)) {
+      report_failure("stack module does not exist: " + module_path);
       continue;
     }
     int fd = open(module_path.c_str(), O_RDONLY);
     if (fd < 0) {
-      session.backtrace.warnings.push_back(
-          {"module-file-missing", record.module, "cannot open stack module"});
+      report_failure("cannot open stack module: " + module_path);
       continue;
     }
     std::string module_name = std::filesystem::path(module_path).filename().string();
@@ -706,9 +829,7 @@ Backtrace symbolize_stack(const Options& options, const std::vector<StackRecord>
         dwfl_report_elf(session.dwfl, module_name.c_str(), module_path.c_str(), fd, 0, true);
     if (module == nullptr) {
       close(fd);
-      session.backtrace.warnings.push_back(
-          {"module-file-missing", record.module,
-           std::string("cannot report stack module: ") + dwfl_errmsg(-1)});
+      report_failure("cannot report stack module: " + dwfl_error());
       continue;
     }
     reported_modules[module_path] = module;
@@ -723,26 +844,34 @@ Backtrace symbolize_stack(const Options& options, const std::vector<StackRecord>
 
   ThreadInfo thread;
   thread.tid = 0;
-  for (const auto& record : records) {
-    auto path_it = record_paths.find(record.module);
-    if (path_it == record_paths.end()) {
+  for (std::size_t index = 0; index < records.size(); ++index) {
+    const StackRecord& record = records[index];
+    if (record_paths[index].empty()) {
       continue;
     }
-    auto found = reported_modules.find(path_it->second);
+    const auto found = reported_modules.find(record_paths[index]);
     if (found == reported_modules.end()) {
+      continue;
+    }
+    std::uint64_t lookup_address = 0;
+    if (!stack_record_lookup_address(record, &lookup_address)) {
+      session.backtrace.warnings.push_back(
+          {"stack-address-underflow", record.module.empty() ? record.build_id : record.module,
+           "runtime address " + hex_value(record.address) + " is below load base " +
+               hex_value(record.load_base) + "; skipping record"});
       continue;
     }
     Dwfl_Module* module = found->second;
     Frame frame;
     frame.pc = record.address;
-    frame.lookup_pc = record.address;
+    frame.lookup_pc = lookup_address;
     ModuleInfo* module_info = module_for(session, module);
     if (module_info != nullptr) {
       frame.module_path = module_info->path;
       frame.module_name = module_info->name;
       frame.build_id = module_info->build_id;
     }
-    symbolize_address(session, module, record.address, module_info, &frame);
+    symbolize_address(session, module, lookup_address, module_info, &frame);
     if (session.has_filter) {
       const std::string& name = frame.demangled.empty() ? frame.mangled : frame.demangled;
       if (!std::regex_search(name, session.filter)) {

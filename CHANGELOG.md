@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+- Add `--stack` runtime-address forms (`MODULE RUNTIME @ LOAD_BASE`) and
+  build-id-only records resolved through debuginfod.
+- Add live thread names from `/proc/<pid>/task/<tid>/comm`, `live-thread-gone`
+  handling for exit races, and clearer live attach failures.
+- Map `/rustc/<hash>/library/...` automatically from a discovered rust-src
+  tree. `RUST_SRC_PATH` and `NIX_SYM_RUST_SRC` are honored; explicit
+  `--source-dir` still wins.
+- Report missing generated files as `source-generated-file` for directory
+  sources.
+- Harden core parsing with bounded raw/decompressed size, note bytes, and note
+  count. Add an fd-based parser for fuzzing.
+- Move archive and overlay extraction into a hardened `archive` component with
+  traversal, symlink, device, entry, and size limits.
+- Add core, archive, and stack fuzz targets. Add corrupt-core and malformed
+  debuginfod response tests.
+- Add gdb `file` selection so debuginfod-fetched source can be listed for a
+  foreign core.
+- Produce and verify a real aarch64 QEMU kernel core, add a reproducible script
+  and CI job, and document the cross-architecture path.
+- Add a 104-module synthetic core benchmark, a second dogfood pass, and
+  performance documentation.
+- Add header dependency tracking to the Makefile so class layout changes cannot
+  leave stale objects.
+
 ## 0.2.0
 
 - Add `--pid` live process attach.

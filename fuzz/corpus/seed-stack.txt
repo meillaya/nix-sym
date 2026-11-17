@@ -1,0 +1,5 @@
+/nix/store/abc-demo/bin/demo 0x1187 c36966051dcc87a30f7ac34a81287ee60a9e1df1
+/nix/store/abc-demo/bin/demo 0x555555555187 @ 0x555555554000
+c36966051dcc87a30f7ac34a81287ee60a9e1df1 0x1187
+0x1079
+# comment

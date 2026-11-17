@@ -1,17 +1,11 @@
 #include "source.hpp"
 
+#include "archive.hpp"
 #include "debuginfod.hpp"
-
-#include <fcntl.h>
-
-#include <archive.h>
-#include <archive_entry.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include "process.hpp"
 
 #include <algorithm>
-#include <cerrno>
-#include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -48,37 +42,6 @@ bool path_is_within(const std::string& path, const std::string& root) {
     return true;
   }
   return path.rfind(root + "/", 0) == 0;
-}
-
-std::vector<std::string> split_components(const std::string& path) {
-  std::vector<std::string> parts;
-  std::string current;
-  for (char c : path) {
-    if (c == '/') {
-      if (!current.empty()) {
-        parts.push_back(current);
-        current.clear();
-      }
-    } else {
-      current.push_back(c);
-    }
-  }
-  if (!current.empty()) {
-    parts.push_back(current);
-  }
-  return parts;
-}
-
-bool safe_relative_path(const std::string& path) {
-  if (path.empty() || path[0] == '/') {
-    return false;
-  }
-  for (const auto& part : split_components(path)) {
-    if (part == "..") {
-      return false;
-    }
-  }
-  return true;
 }
 
 bool is_directory(const std::string& path) {
@@ -123,113 +86,55 @@ std::string read_text(const std::string& path) {
   return out.str();
 }
 
-bool copy_file(const std::string& source, const std::string& destination) {
-  std::error_code ec;
-  fs::create_directories(fs::path(destination).parent_path(), ec);
-  fs::remove(destination, ec);
-  fs::copy_file(source, destination, fs::copy_options::overwrite_existing, ec);
-  return !ec;
+std::string trim_text(std::string value) {
+  while (!value.empty() && (value.back() == '\n' || value.back() == '\r' || value.back() == ' ')) {
+    value.pop_back();
+  }
+  size_t begin = 0;
+  while (begin < value.size() && (value[begin] == ' ' || value[begin] == '\t')) {
+    ++begin;
+  }
+  return value.substr(begin);
 }
 
-bool hardlink_or_copy(const std::string& source, const std::string& destination) {
-  std::error_code ec;
-  fs::create_directories(fs::path(destination).parent_path(), ec);
-  fs::remove(destination, ec);
-  fs::create_hard_link(source, destination, ec);
-  if (!ec) {
-    return true;
+// A rust-src tree has a library/ directory at its root. RUST_SRC_PATH
+// conventionally points either at that root or at the library directory.
+std::string rust_root_from_candidate(std::string candidate) {
+  while (candidate.size() > 1 && candidate.back() == '/') {
+    candidate.pop_back();
   }
-  return copy_file(source, destination);
+  if (candidate.empty()) {
+    return {};
+  }
+  if (is_directory(candidate + "/library")) {
+    return candidate;
+  }
+  if (basename(candidate) == "library" && is_directory(candidate)) {
+    return fs::path(candidate).parent_path().string();
+  }
+  return {};
 }
 
-bool copy_symlink(const std::string& source, const std::string& destination) {
-  std::error_code ec;
-  fs::path target = fs::read_symlink(source, ec);
-  if (ec) {
-    return false;
+std::vector<std::string> split_search_path(const char* value) {
+  std::vector<std::string> parts;
+  if (value == nullptr) {
+    return parts;
   }
-  fs::remove(destination, ec);
-  fs::create_directories(fs::path(destination).parent_path(), ec);
-  fs::create_symlink(target, destination, ec);
-  return !ec;
-}
-
-bool copy_directory_tree(const std::string& source, const std::string& destination,
-                         std::string* status) {
-  std::error_code ec;
-  fs::create_directories(destination, ec);
-  if (ec) {
-    *status = "cache-error";
-    return false;
-  }
-  for (fs::recursive_directory_iterator iterator(source, ec), end; iterator != end;
-       iterator.increment(ec)) {
-    if (ec) {
-      *status = "source-unavailable";
-      return false;
-    }
-    const fs::path& entry = iterator->path();
-    std::string relative = fs::relative(entry, source, ec).generic_string();
-    if (ec || !safe_relative_path(relative)) {
-      *status = "source-unsafe";
-      return false;
-    }
-    std::string target = destination + "/" + relative;
-    if (iterator->is_symlink(ec)) {
-      if (!copy_symlink(entry.string(), target)) {
-        *status = "source-unavailable";
-        return false;
+  std::string current;
+  for (const char c : std::string(value)) {
+    if (c == ':') {
+      if (!current.empty()) {
+        parts.push_back(current);
+        current.clear();
       }
-    } else if (iterator->is_directory(ec)) {
-      fs::create_directories(target, ec);
-    } else if (iterator->is_regular_file(ec)) {
-      if (!hardlink_or_copy(entry.string(), target)) {
-        *status = "source-unavailable";
-        return false;
-      }
+    } else {
+      current.push_back(c);
     }
   }
-  return true;
-}
-
-bool apply_overlay(const std::string& destination, const std::string& overlay,
-                   const std::string& root_hint, std::string* status) {
-  if (overlay.empty() || !is_directory(overlay)) {
-    return true;
+  if (!current.empty()) {
+    parts.push_back(current);
   }
-  std::string base = overlay;
-  std::error_code ec;
-  if (!root_hint.empty() && is_directory(overlay + "/" + root_hint)) {
-    base = overlay + "/" + root_hint;
-  }
-  for (fs::recursive_directory_iterator iterator(base, ec), end; iterator != end;
-       iterator.increment(ec)) {
-    if (ec) {
-      *status = "source-unavailable";
-      return false;
-    }
-    const fs::path& entry = iterator->path();
-    std::string relative = fs::relative(entry, base, ec).generic_string();
-    if (ec || !safe_relative_path(relative)) {
-      *status = "source-unsafe";
-      return false;
-    }
-    std::string target = destination + "/" + relative;
-    if (iterator->is_symlink(ec)) {
-      if (!copy_symlink(entry.string(), target)) {
-        *status = "source-unavailable";
-        return false;
-      }
-    } else if (iterator->is_directory(ec)) {
-      fs::create_directories(target, ec);
-    } else if (iterator->is_regular_file(ec)) {
-      if (!copy_file(entry.string(), target)) {
-        *status = "source-unavailable";
-        return false;
-      }
-    }
-  }
-  return true;
+  return parts;
 }
 
 } // namespace
@@ -254,6 +159,58 @@ SourceResolver::SourceResolver(const std::string& cache_root, bool materialize, 
     }
     source_maps_.emplace_back(prefix, directory);
   }
+}
+
+std::string SourceResolver::discover_rust_source_root() {
+  if (rust_source_root_probed_) {
+    return rust_source_root_;
+  }
+  rust_source_root_probed_ = true;
+
+  std::vector<std::string> candidates;
+  for (const char* variable : {"NIX_SYM_RUST_SRC", "RUST_SRC_PATH"}) {
+    for (const std::string& part : split_search_path(std::getenv(variable))) {
+      candidates.push_back(part);
+    }
+  }
+
+  std::vector<std::string> homes;
+  if (const char* home = std::getenv("HOME"); home != nullptr && home[0] != '\0') {
+    homes.push_back(home);
+  }
+  std::vector<std::string> rustup_roots;
+  if (const char* rustup = std::getenv("RUSTUP_HOME"); rustup != nullptr && rustup[0] != '\0') {
+    rustup_roots.push_back(rustup);
+  }
+  for (const std::string& home : homes) {
+    rustup_roots.push_back(home + "/.rustup");
+  }
+  for (const std::string& root : rustup_roots) {
+    std::error_code ec;
+    for (fs::directory_iterator iterator(root + "/toolchains", ec), end; !ec && iterator != end;
+         iterator.increment(ec)) {
+      if (iterator->is_directory(ec)) {
+        candidates.push_back(iterator->path().string() + "/lib/rustlib/src/rust");
+      }
+    }
+  }
+
+  ProcessResult rustc = run_process({"rustc", "--print", "sysroot"}, 5);
+  if (rustc.started && !rustc.timed_out && rustc.exit_code == 0) {
+    std::string sysroot = trim_text(rustc.out);
+    if (!sysroot.empty()) {
+      candidates.push_back(sysroot + "/lib/rustlib/src/rust");
+    }
+  }
+
+  for (const std::string& candidate : candidates) {
+    std::string root = rust_root_from_candidate(candidate);
+    if (!root.empty()) {
+      rust_source_root_ = root;
+      return rust_source_root_;
+    }
+  }
+  return {};
 }
 
 SourceMapping SourceResolver::module_mapping(const ModuleInfo& module) {
@@ -332,91 +289,7 @@ bool SourceResolver::extract_archive(const std::string& archive_path,
     *status = "cache-error";
     return false;
   }
-
-  struct archive* archive = archive_read_new();
-  if (archive == nullptr) {
-    *status = "cache-error";
-    return false;
-  }
-  archive_read_support_filter_all(archive);
-  archive_read_support_format_all(archive);
-  if (archive_read_open_filename(archive, archive_path.c_str(), 65536) != ARCHIVE_OK) {
-    *status = "source-unavailable";
-    archive_read_free(archive);
-    return false;
-  }
-
-  bool ok = true;
-  struct archive_entry* entry = nullptr;
-  while (archive_read_next_header(archive, &entry) == ARCHIVE_OK) {
-    const char* raw_path = archive_entry_pathname(entry);
-    if (raw_path == nullptr) {
-      continue;
-    }
-    std::string relative = raw_path;
-    while (relative.rfind("./", 0) == 0) {
-      relative.erase(0, 2);
-    }
-    if (!safe_relative_path(relative)) {
-      *status = "source-unsafe";
-      ok = false;
-      break;
-    }
-    std::string target = destination + "/" + relative;
-    mode_t type = archive_entry_filetype(entry);
-    if (type == AE_IFDIR) {
-      fs::create_directories(target);
-    } else if (type == AE_IFREG) {
-      fs::create_directories(fs::path(target).parent_path());
-      int fd = open(target.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-      if (fd < 0) {
-        *status = "cache-error";
-        ok = false;
-        break;
-      }
-      const void* buffer = nullptr;
-      size_t size = 0;
-      la_int64_t offset = 0;
-      bool file_ok = true;
-      while (archive_read_data_block(archive, &buffer, &size, &offset) == ARCHIVE_OK) {
-        const char* data = static_cast<const char*>(buffer);
-        size_t written = 0;
-        while (written < size) {
-          ssize_t n = pwrite(fd, data + written, size - written,
-                             static_cast<off_t>(offset + static_cast<la_int64_t>(written)));
-          if (n < 0 && errno == EINTR) {
-            continue;
-          }
-          if (n <= 0) {
-            file_ok = false;
-            break;
-          }
-          written += static_cast<size_t>(n);
-        }
-        if (!file_ok) {
-          break;
-        }
-      }
-      close(fd);
-      if (!file_ok) {
-        *status = "cache-error";
-        ok = false;
-        break;
-      }
-    } else if (type == AE_IFLNK) {
-      const char* link_target = archive_entry_symlink(entry);
-      if (link_target != nullptr) {
-        std::string link(link_target);
-        if (link.find("..") == std::string::npos && link[0] != '/') {
-          fs::create_directories(fs::path(target).parent_path());
-          fs::remove(target);
-          fs::create_symlink(link, target);
-        }
-      }
-    }
-  }
-  archive_read_free(archive);
-  if (!ok) {
+  if (!archive::extract_archive(archive_path, destination, archive::ArchiveLimits{}, status)) {
     remove_all(destination);
     return false;
   }
@@ -430,11 +303,11 @@ bool SourceResolver::copy_tree_with_overlay(const std::string& source, const std
                                             const std::string& destination, std::string* status) {
   remove_all(destination);
   std::string source_root = find_source_root(source, root_hint);
-  if (!copy_directory_tree(source_root, destination, status)) {
+  if (!archive::copy_directory_tree(source_root, destination, status)) {
     remove_all(destination);
     return false;
   }
-  if (!apply_overlay(destination, overlay, root_hint, status)) {
+  if (!archive::apply_overlay(destination, overlay, root_hint, status)) {
     remove_all(destination);
     return false;
   }
@@ -504,7 +377,7 @@ bool SourceResolver::ensure_source(const SourceMapping& mapping, std::string* re
   }
   if (mapping.kind == "archive" && !mapping.overlay_path.empty()) {
     std::string overlay_status;
-    if (!apply_overlay(extracted, mapping.overlay_path, mapping.root, &overlay_status)) {
+    if (!archive::apply_overlay(extracted, mapping.overlay_path, mapping.root, &overlay_status)) {
       *status = overlay_status;
       return false;
     }
@@ -566,6 +439,33 @@ SourceLocation SourceResolver::map(const ModuleInfo& module, const std::string& 
     return location;
   }
 
+  if (full_file.rfind("/rustc/", 0) == 0) {
+    const std::size_t hash_end = full_file.find('/', 7);
+    if (hash_end != std::string::npos) {
+      const std::string prefix = full_file.substr(0, hash_end);
+      const std::string rust_root = discover_rust_source_root();
+      if (!rust_root.empty()) {
+        const std::string suffix = full_file.substr(prefix.size());
+        const std::string candidate = rust_root + suffix;
+        SourceMapping mapping;
+        mapping.module = module.path.empty() ? module.name : module.path;
+        mapping.comp_dir = prefix;
+        mapping.root = basename(prefix);
+        mapping.kind = "directory";
+        mapping.resolved_root = rust_root;
+        mapping.status = is_regular(candidate) ? "resolved" : "source-missing";
+        mappings_.insert_or_assign("rust-src|" + prefix, mapping);
+        if (is_regular(candidate)) {
+          location.resolved = candidate;
+          location.status = "resolved";
+        } else {
+          location.status = "source-missing";
+        }
+        return location;
+      }
+    }
+  }
+
   if (!normalized_comp_dir.empty() && path_is_within(full_file, normalized_comp_dir)) {
     root_path = normalized_comp_dir;
     relative = full_file.substr(normalized_comp_dir.size());
@@ -622,8 +522,21 @@ SourceLocation SourceResolver::map(const ModuleInfo& module, const std::string& 
     if (is_regular(candidate)) {
       location.resolved = candidate;
       location.status = "resolved";
+    } else if (full_file.rfind("/build/", 0) == 0) {
+      location.status = "source-generated-file";
     } else {
       location.status = "source-missing";
+    }
+  } else if (mapping.status == "available" && mapping.kind == "directory" &&
+             !mapping.source_path.empty()) {
+    std::string candidate = find_source_root(mapping.source_path, mapping.root) + "/" + relative;
+    if (is_regular(candidate)) {
+      location.resolved = candidate;
+      location.status = "resolved";
+    } else if (full_file.rfind("/build/", 0) == 0) {
+      location.status = "source-generated-file";
+    } else {
+      location.status = mapping.status;
     }
   } else {
     location.status = mapping.status;

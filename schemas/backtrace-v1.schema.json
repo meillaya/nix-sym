@@ -4,62 +4,185 @@
   "title": "nix-sym backtrace",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "tool", "status", "core", "modules", "threads", "warnings"],
+  "required": [
+    "schema",
+    "tool",
+    "status",
+    "core",
+    "modules",
+    "threads",
+    "warnings"
+  ],
   "properties": {
-    "schema": { "const": 1 },
+    "schema": {
+      "const": 1
+    },
     "tool": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": { "const": "nix-sym" },
-        "version": { "type": "string" }
+        "name": {
+          "const": "nix-sym"
+        },
+        "version": {
+          "type": "string"
+        }
       }
     },
-    "status": { "enum": ["complete", "partial"] },
+    "status": {
+      "enum": [
+        "complete",
+        "partial"
+      ]
+    },
     "core": {
       "type": "object",
-      "required": ["path", "compressed", "pid", "exe", "signal", "truncated"],
+      "required": [
+        "path",
+        "compressed",
+        "pid",
+        "exe",
+        "signal",
+        "truncated"
+      ],
       "properties": {
-        "path": { "type": "string" },
-        "compressed": { "type": "boolean" },
-        "pid": { "type": "integer" },
-        "exe": { "type": ["string", "null"] },
+        "path": {
+          "type": "string"
+        },
+        "compressed": {
+          "type": "boolean"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "exe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "signal": {
           "type": "object",
-          "required": ["number", "name"],
+          "required": [
+            "number",
+            "name"
+          ],
           "properties": {
-            "number": { "type": "integer" },
-            "name": { "type": ["string", "null"] }
+            "number": {
+              "type": "integer"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
-        "truncated": { "type": "boolean" }
+        "truncated": {
+          "type": "boolean"
+        }
       }
     },
     "modules": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "name", "build_id", "status", "drv", "debug_output", "debug_file", "source"],
+        "required": [
+          "path",
+          "name",
+          "build_id",
+          "status",
+          "drv",
+          "debug_output",
+          "debug_file",
+          "source"
+        ],
         "properties": {
-          "path": { "type": "string" },
-          "name": { "type": "string" },
-          "build_id": { "type": ["string", "null"] },
-          "status": {
-            "enum": ["resolved", "missing-debug", "missing-file", "no-build-id", "non-nix", "unknown"]
+          "path": {
+            "type": "string"
           },
-          "debuginfod": { "type": "boolean" },
-          "drv": { "type": ["string", "null"] },
-          "debug_output": { "type": ["string", "null"] },
-          "debug_file": { "type": ["string", "null"] },
+          "name": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "missing-debug",
+              "missing-file",
+              "no-build-id",
+              "non-nix",
+              "unknown"
+            ]
+          },
+          "debuginfod": {
+            "type": "boolean"
+          },
+          "drv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "debug_output": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "debug_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source": {
             "type": "object",
-            "required": ["kind", "path", "overlay", "root", "status"],
+            "required": [
+              "kind",
+              "path",
+              "overlay",
+              "root",
+              "status"
+            ],
             "properties": {
-              "kind": { "enum": ["none", "directory", "archive"] },
-              "path": { "type": ["string", "null"] },
-              "overlay": { "type": ["string", "null"] },
-              "root": { "type": ["string", "null"] },
-              "status": { "type": "string" }
+              "kind": {
+                "enum": [
+                  "none",
+                  "directory",
+                  "archive"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "overlay": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "root": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string"
+              }
             }
           }
         }
@@ -69,47 +192,116 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["tid", "frames"],
+        "required": [
+          "tid",
+          "frames"
+        ],
         "properties": {
-          "tid": { "type": "integer" },
+          "tid": {
+            "type": "integer"
+          },
           "frames": {
             "type": "array",
             "items": {
               "type": "object",
               "required": [
-                "index", "pc", "lookup_pc", "activation", "module", "module_name",
-                "build_id", "function", "source", "inline"
+                "index",
+                "pc",
+                "lookup_pc",
+                "activation",
+                "module",
+                "module_name",
+                "build_id",
+                "function",
+                "source",
+                "inline"
               ],
               "properties": {
-                "index": { "type": "integer" },
-                "pc": { "type": "string", "pattern": "^0x[0-9a-f]+$" },
-                "lookup_pc": { "type": "string", "pattern": "^0x[0-9a-f]+$" },
-                "activation": { "type": "boolean" },
-                "module": { "type": ["string", "null"] },
-                "module_name": { "type": "string" },
-                "build_id": { "type": ["string", "null"] },
+                "index": {
+                  "type": "integer"
+                },
+                "pc": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]+$"
+                },
+                "lookup_pc": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-f]+$"
+                },
+                "activation": {
+                  "type": "boolean"
+                },
+                "module": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "module_name": {
+                  "type": "string"
+                },
+                "build_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "function": {
                   "type": "object",
-                  "required": ["mangled", "demangled", "language"],
+                  "required": [
+                    "mangled",
+                    "demangled",
+                    "language"
+                  ],
                   "properties": {
-                    "mangled": { "type": "string" },
-                    "demangled": { "type": "string" },
-                    "language": { "type": "string" }
+                    "mangled": {
+                      "type": "string"
+                    },
+                    "demangled": {
+                      "type": "string"
+                    },
+                    "language": {
+                      "type": "string"
+                    }
                   }
                 },
                 "source": {
                   "oneOf": [
-                    { "type": "null" },
+                    {
+                      "type": "null"
+                    },
                     {
                       "type": "object",
-                      "required": ["original", "comp_dir", "line", "column", "resolved", "status"],
+                      "required": [
+                        "original",
+                        "comp_dir",
+                        "line",
+                        "column",
+                        "resolved",
+                        "status"
+                      ],
                       "properties": {
-                        "original": { "type": "string" },
-                        "comp_dir": { "type": "string" },
-                        "line": { "type": "integer" },
-                        "column": { "type": "integer" },
-                        "resolved": { "type": ["string", "null"] },
-                        "status": { "type": "string" }
+                        "original": {
+                          "type": "string"
+                        },
+                        "comp_dir": {
+                          "type": "string"
+                        },
+                        "line": {
+                          "type": "integer"
+                        },
+                        "column": {
+                          "type": "integer"
+                        },
+                        "resolved": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "status": {
+                          "type": "string"
+                        }
                       }
                     }
                   ]
@@ -118,24 +310,59 @@
                   "type": "array",
                   "items": {
                     "type": "object",
-                    "required": ["mangled", "demangled", "language", "call"],
+                    "required": [
+                      "mangled",
+                      "demangled",
+                      "language",
+                      "call"
+                    ],
                     "properties": {
-                      "mangled": { "type": "string" },
-                      "demangled": { "type": "string" },
-                      "language": { "type": "string" },
+                      "mangled": {
+                        "type": "string"
+                      },
+                      "demangled": {
+                        "type": "string"
+                      },
+                      "language": {
+                        "type": "string"
+                      },
                       "call": {
                         "oneOf": [
-                          { "type": "null" },
+                          {
+                            "type": "null"
+                          },
                           {
                             "type": "object",
-                            "required": ["original", "comp_dir", "line", "column", "resolved", "status"],
+                            "required": [
+                              "original",
+                              "comp_dir",
+                              "line",
+                              "column",
+                              "resolved",
+                              "status"
+                            ],
                             "properties": {
-                              "original": { "type": "string" },
-                              "comp_dir": { "type": "string" },
-                              "line": { "type": "integer" },
-                              "column": { "type": "integer" },
-                              "resolved": { "type": ["string", "null"] },
-                              "status": { "type": "string" }
+                              "original": {
+                                "type": "string"
+                              },
+                              "comp_dir": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "integer"
+                              },
+                              "column": {
+                                "type": "integer"
+                              },
+                              "resolved": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "status": {
+                                "type": "string"
+                              }
                             }
                           }
                         ]
@@ -145,6 +372,12 @@
                 }
               }
             }
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
@@ -153,11 +386,24 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["code", "module", "message"],
+        "required": [
+          "code",
+          "module",
+          "message"
+        ],
         "properties": {
-          "code": { "type": "string" },
-          "module": { "type": ["string", "null"] },
-          "message": { "type": "string" }
+          "code": {
+            "type": "string"
+          },
+          "module": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
         }
       }
     }

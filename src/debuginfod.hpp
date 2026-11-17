@@ -32,6 +32,10 @@ public:
   DebuginfodResult find_debuginfo(const std::string& build_id_hex);
   DebuginfodResult find_source(const std::string& build_id_hex, const std::string& source_path);
 
+  // Fetch the executable for a build id. This is how a --stack record that
+  // names only a build id gets a module path when no local path is known.
+  DebuginfodResult find_executable(const std::string& build_id_hex);
+
   // Install a fetched debug file in a libdwfl-compatible build-id layout and
   // return the synthetic debug output directory. The directory can be added
   // to debuginfo_path.

@@ -89,7 +89,7 @@ std::string render_json(const Backtrace& backtrace) {
   std::ostringstream out;
   out << "{\n";
   out << "  \"schema\": 1,\n";
-  out << "  \"tool\": {\"name\": \"nix-sym\", \"version\": \"0.2.0\"},\n";
+  out << "  \"tool\": {\"name\": \"nix-sym\", \"version\": \"0.3.0\"},\n";
   out << "  \"status\": " << quote(backtrace.partial ? "partial" : "complete") << ",\n";
 
   out << "  \"core\": {\n";
@@ -139,6 +139,7 @@ std::string render_json(const Backtrace& backtrace) {
     const ThreadInfo& thread = backtrace.threads[t];
     out << "    {\n";
     out << "      \"tid\": " << thread.tid << ",\n";
+    out << "      \"name\": " << (thread.name.empty() ? "null" : quote(thread.name)) << ",\n";
     out << "      \"frames\": [\n";
     for (size_t f = 0; f < thread.frames.size(); ++f) {
       const Frame& frame = thread.frames[f];
@@ -212,7 +213,11 @@ std::string render_text(const Backtrace& backtrace, bool color, bool demangle) {
       << backtrace.warnings.size() << " warnings" << reset << "\n";
 
   for (const auto& thread : backtrace.threads) {
-    out << "\n" << bold << "Thread " << thread.tid << reset << "\n";
+    out << "\n" << bold << "Thread " << thread.tid << reset;
+    if (!thread.name.empty()) {
+      out << " (" << thread.name << ")";
+    }
+    out << "\n";
     if (thread.frames.empty()) {
       out << "  (no frames)\n";
       continue;

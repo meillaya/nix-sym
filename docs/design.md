@@ -37,12 +37,13 @@ without unwinding.
 
 | File | Responsibility |
 | --- | --- |
-| `src/core_reader.*` | Detect zstd, decompress to a temporary file, open the ELF core, parse core notes. |
+| `src/core_reader.*` | Detect zstd, decompress with bounded limits, open the ELF core, parse core notes, and expose an fd-based parser for fuzzing. |
+| `src/archive.*` | Safe archive/overlay extraction with path, symlink, entry, and size limits. |
 | `src/dwfl_session.*` | Own the `Dwfl` session, report modules, resolve debug outputs, unwind threads and frames, read inline scopes. |
 | `src/symbolizer` work is in `dwfl_session.cpp` | Map addresses to ELF symbols, DWARF lines, inline chains, and language. |
 | `src/nix.*` | Resolve a store path and build id to a derivation, debug output, and source links; fetch and cache; batch module requests. |
-| `src/debuginfod.*` | Query a debuginfod server by build id, cache debug info, and install it in a libdwfl build-id layout. |
-| `src/stack.*` | Parse module-relative address lists for `--stack`. |
+| `src/debuginfod.*` | Query a debuginfod server by build id for debug info, executables, and source; cache and install in a libdwfl layout. |
+| `src/stack.*` | Parse link-time, runtime-with-base, and build-id-only address lists for `--stack`. |
 | `src/source.*` | Map DWARF paths, extract archives, merge overlays, cache source trees. |
 | `src/demangle.*` | Language detection, C++ demangling with `__cxa_demangle`, dispatch to Rust and Haskell. |
 | `src/rust_demangle.cpp` | Rust legacy and v0 symbol parser. |
@@ -61,6 +62,13 @@ compressed core can be reused for a gdb session.
 
 The core notes provide the signal and process name. The `NT_FILE` mapping is
 handled by libdwfl; `NT_PRSTATUS` register sets are used by its unwinder.
+Core limits cap raw and decompressed size, per-note bytes, and note count.
+`read_core_info_fd` is the fuzz entry point; it never creates a temporary file
+for a non-zstd input.
+
+An aarch64 cold core can be read on an x86_64 host because libdwfl uses the
+core's ELF class and machine. The module file must exist at the recorded
+`NT_FILE` path; there is no `--sysroot` remapping.
 
 ## Debug resolution
 
@@ -151,7 +159,14 @@ line is added.
 
 `--source-dir PREFIX=DIR` takes precedence over package source. It covers
 Rust standard library paths, local checkouts, and generated trees without
-changing the debug output.
+changing the debug output. Without an explicit mapping, a `/rustc/<hash>/`
+path is matched to a rust-src tree discovered from `NIX_SYM_RUST_SRC`,
+`RUST_SRC_PATH`, the rustc sysroot, or rustup toolchains.
+
+For a directory source that is not materialized, the resolver checks the
+candidate file directly. A missing file under `/build/` is reported as
+`source-generated-file`, not `source-missing`. Archives are materialized
+before file checks.
 
 If the source is not available, the frame keeps its original `/build/...` path
 and a status. Generated files and paths outside the source root are unresolved.
@@ -162,6 +177,7 @@ The generated file sets:
 
 - `set debug-file-directory` with the resolved debug directories
 - `set substitute-path /build/<root> <resolved source root>`
+- `file <crashing executable>` selected from the deepest frame
 - `core-file <absolute core path>`
 
 It disables debuginfod for the session. The debug directories are colon
@@ -182,12 +198,15 @@ cores/                        decompressed cores for gdb
 
 Writes are atomic. Cache entries are validated against the file system before
 use. `--refresh` ignores reads, and `--no-cache` disables reads and writes.
+Build-id-only stack records use the debuginfod executable cache; the fetched
+path becomes the module path.
 
 ## Security
 
-Core files, module names, and debug information are untrusted input. The tool
-does not execute a module or a debug file. It runs `nix` and `nix-store`
-through `execve` with an argument vector, never a shell, and it bounds those
+Core files, module names, archives, and debug information are untrusted input.
+The tool does not execute a module or a debug file. It runs `nix` and
+`nix-store` through `execve` with an argument vector, never a shell, and it
+bounds those
 calls with a timeout. Archive extraction uses path checks. Commands are built
 from store paths and fixed arguments; the binary does not interpolate core
 strings into a shell.

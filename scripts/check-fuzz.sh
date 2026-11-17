@@ -63,6 +63,18 @@ fi
 
 demangle_bin="$tmp/demangle-fuzz"
 json_bin="$tmp/json-fuzz"
+core_bin="$tmp/core-fuzz"
+archive_bin="$tmp/archive-fuzz"
+stack_bin="$tmp/stack-fuzz"
+
+if ! command -v pkg-config >/dev/null 2>&1; then
+  echo "check-fuzz: pkg-config is required for the core and archive targets" >&2
+  exit 1
+fi
+read -r -a core_cflags <<<"$(pkg-config --cflags libdw libelf libzstd)"
+read -r -a core_libs <<<"$(pkg-config --libs libdw libelf libzstd)"
+read -r -a archive_cflags <<<"$(pkg-config --cflags libarchive)"
+read -r -a archive_libs <<<"$(pkg-config --libs libarchive)"
 
 run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc \
   fuzz/demangle_fuzz.cpp src/rust_demangle.cpp src/haskell_demangle.cpp src/demangle.cpp \
@@ -70,14 +82,24 @@ run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc \
 
 run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc \
   fuzz/json_fuzz.cpp src/json.cpp src/model.cpp -o "$json_bin"
+run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc "${core_cflags[@]}" \
+  fuzz/core_fuzz.cpp src/core_reader.cpp src/process.cpp "${core_libs[@]}" -o "$core_bin"
+run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc "${archive_cflags[@]}" \
+  fuzz/archive_fuzz.cpp src/archive.cpp "${archive_libs[@]}" -o "$archive_bin"
+run "$cxx" -std=c++20 -O1 -g -fsanitize=fuzzer,address -Isrc \
+  fuzz/stack_fuzz.cpp src/stack.cpp -o "$stack_bin"
 
 # Build throwaway corpora from the committed seeds: one input per line for the
 # demangler, and the JSON seed verbatim (it deliberately contains raw control
 # characters and UTF-8, which must survive intact).
 demangle_corpus="$tmp/corpus-demangle"
 json_corpus="$tmp/corpus-json"
+core_corpus="$tmp/corpus-core"
+archive_corpus="$tmp/corpus-archive"
+stack_corpus="$tmp/corpus-stack"
 artifact_dir="$tmp/artifacts"
-mkdir -p "$demangle_corpus" "$json_corpus" "$artifact_dir"
+mkdir -p "$demangle_corpus" "$json_corpus" "$core_corpus" "$archive_corpus" \
+  "$stack_corpus" "$artifact_dir"
 
 seed_index=0
 if [[ -f fuzz/corpus/seed-demangle.txt ]]; then
@@ -90,6 +112,9 @@ fi
 if [[ -f fuzz/corpus/seed-json.txt ]]; then
   cp fuzz/corpus/seed-json.txt "$json_corpus/seed-json"
 fi
+if [[ -f fuzz/corpus/seed-stack.txt ]]; then
+  cp fuzz/corpus/seed-stack.txt "$stack_corpus/seed-stack"
+fi
 
 run "$demangle_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
   -artifact_prefix="$artifact_dir/demangle-" "$demangle_corpus"
@@ -97,4 +122,13 @@ run "$demangle_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
 run "$json_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
   -artifact_prefix="$artifact_dir/json-" "$json_corpus"
 
-echo "check-fuzz: both fuzz targets completed ${fuzz_seconds}s runs without a crash"
+run "$core_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
+  -artifact_prefix="$artifact_dir/core-" "$core_corpus"
+
+run "$archive_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
+  -artifact_prefix="$artifact_dir/archive-" "$archive_corpus"
+
+run "$stack_bin" -max_total_time="$fuzz_seconds" -rss_limit_mb=2048 \
+  -artifact_prefix="$artifact_dir/stack-" "$stack_corpus"
+
+echo "check-fuzz: all fuzz targets completed ${fuzz_seconds}s runs without a crash"

@@ -75,4 +75,19 @@ run "$cxx" "${san_flags[@]}" tests/unit/haskell_demangle_test.cpp src/haskell_de
   -o "$haskell_bin"
 run "$haskell_bin"
 
+core_reader_bin="$tmp/core-reader-test"
+run "$cxx" "${san_flags[@]}" "${pkg_cflags[@]}" "${sources[@]}" \
+  tests/unit/core_reader_test.cpp "${pkg_libs[@]}" "${link_extra[@]}" -o "$core_reader_bin"
+run "$core_reader_bin"
+
+archive_bin="$tmp/archive-test"
+run "$cxx" "${san_flags[@]}" "${pkg_cflags[@]}" "${sources[@]}" \
+  tests/unit/archive_test.cpp "${pkg_libs[@]}" "${link_extra[@]}" -o "$archive_bin"
+run "$archive_bin"
+
+source_auto_bin="$tmp/source-auto-test"
+run "$cxx" "${san_flags[@]}" "${pkg_cflags[@]}" "${sources[@]}" \
+  tests/unit/source_auto_test.cpp "${pkg_libs[@]}" "${link_extra[@]}" -o "$source_auto_bin"
+run "$source_auto_bin"
+
 echo "check-sanitize: all sanitizer checks passed"

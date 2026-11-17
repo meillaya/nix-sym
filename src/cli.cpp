@@ -229,7 +229,7 @@ void print_usage(const char* argv0) {
 }
 
 void print_version() {
-  std::cout << "nix-sym 0.2.0\n";
+  std::cout << "nix-sym 0.3.0\n";
 }
 
 } // namespace nix_sym

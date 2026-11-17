@@ -12,7 +12,7 @@ frames by index, and warnings by code and module.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `schema` | number | Always `1`. |
-| `tool` | object | `{"name": "nix-sym", "version": "0.2.0"}`. |
+| `tool` | object | `{"name": "nix-sym", "version": "0.3.0"}`. |
 | `status` | string | `complete` or `partial`. |
 | `core` | object | Core metadata. |
 | `modules` | array | Every module reported by libdwfl. |
@@ -53,13 +53,15 @@ of the `.source` link. `source.overlay` is the `.sourceoverlay` directory.
 
 ## threads and frames
 
-Each thread has `tid` and `frames`. Each frame has:
+Each thread has `tid`, `name`, and `frames`. `name` is the `/proc/<pid>/task/<tid>/comm` value for live processes and null when unavailable.
+
+Each frame has:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `index` | number | Frame index after filtering. |
-| `pc` | string | Program counter as a hex string. |
-| `lookup_pc` | string | The adjusted PC used for symbol and line lookup. |
+| `pc` | string | Program counter as a hex string. For a runtime `--stack` record this is the supplied runtime address. |
+| `lookup_pc` | string | The adjusted PC used for symbol and line lookup (link-time for runtime stack records). |
 | `activation` | boolean | DWARF activation frame flag. |
 | `module` | string or null | Module path. |
 | `module_name` | string | Module name. |
@@ -79,7 +81,7 @@ A source location has:
 | `line` | number | Line number. |
 | `column` | number | Column number. |
 | `resolved` | string or null | Path in the cache or in a source directory when materialized. |
-| `status` | string | `resolved`, `available`, `source-unavailable`, `source-missing`, or `unresolved`. |
+| `status` | string | `resolved`, `available`, `source-unavailable`, `source-missing`, `source-generated-file`, `debuginfod`, `debuginfod-failed`, or `unresolved`. |
 
 Each inline entry has `mangled`, `demangled`, `language`, and `call`, where
 `call` is a source location for the call site.
@@ -97,7 +99,8 @@ Each warning has:
 Known codes include `no-build-id`, `debug-info-missing`,
 `debug-info-mismatch`, `module-file-missing`, `source-unavailable`,
 `source-generated-file`, `nix-unavailable`, `fetch-failed`,
-`debuginfod-failed`, `live-attach-failed`, `relative-module-path`,
+`debuginfod-failed`, `live-attach-failed`, `live-thread-gone`,
+`stack-build-id-unresolved`, `stack-address-underflow`, `relative-module-path`,
 `unsupported-arch`, `truncated-core`, `demangle-failed`, `inline-limit`, and
 `invalid-filter`.
 
@@ -106,7 +109,7 @@ Known codes include `no-build-id`, `debug-info-missing`,
 ```json
 {
   "schema": 1,
-  "tool": { "name": "nix-sym", "version": "0.2.0" },
+  "tool": { "name": "nix-sym", "version": "0.3.0" },
   "status": "partial",
   "core": {
     "path": "/tmp/core.123",

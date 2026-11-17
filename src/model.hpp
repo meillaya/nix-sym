@@ -70,6 +70,9 @@ struct ModuleInfo {
 
 struct ThreadInfo {
   int tid = 0;
+  // Thread name from /proc/<pid>/task/<tid>/comm for live processes. Empty when
+  // unavailable (core/stack input, or the thread disappeared while unwinding).
+  std::string name;
   std::vector<Frame> frames;
 };
 

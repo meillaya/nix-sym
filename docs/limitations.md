@@ -1,18 +1,22 @@
 # Limitations
 
-`nix-sym` is a 0.1 tool. The following boundaries are deliberate.
+`nix-sym` is a 0.3 tool. The following boundaries are deliberate.
 
 ## Platforms
 
 - Linux ELF core dumps only.
-- x86_64 and aarch64 are the target architectures. A core from a different
-  architecture from the host is not supported.
+- x86_64 and aarch64 are the target architectures. An aarch64 cold core from a
+  QEMU guest can be read and symbolized on an x86_64 host when the module file
+  is available at the absolute `NT_FILE` path. This was verified with local
+  DWARF and `.eh_frame`; it is not hardware coverage, and live attach remains
+  host-architecture only.
 - `--pid` requires ptrace permission and a dumpable process. Kernel Yama
   settings, container seccomp policies, and process ownership can block it.
   Use `eu-stack -p` or `gdb -p` when the tool cannot attach.
-- `--stack` uses link-time addresses. The caller must subtract the module load
-  base from a runtime PC. It symbolizes only the addresses supplied; it does
-  not unwind or read memory.
+- `--stack` uses either link-time addresses or runtime addresses with an
+  explicit load base. It symbolizes only the addresses supplied; it does not
+  unwind or read memory. Build-id-only records rely on debuginfod; without it
+  they are skipped with a warning.
 - Kernel core dumps, vmcore files, and non-ELF crash formats are not supported.
 - macOS and Windows are not supported.
 
@@ -21,6 +25,8 @@
 - Plain ELF and zstd-compressed cores are accepted. Other systemd compression
   choices, such as lz4 or xz, are rejected with a hint to use
   `coredumpctl dump`.
+- Core parsing enforces resource limits: 64 GiB raw/decompressed, 512 MiB per
+  note segment, and a bounded note count. Larger inputs fail with a clear error.
 - A core that does not contain `NT_FILE` can produce a partial module list.
 - A core whose executable is missing from the store may be reportable only with
   symbols from the debug output, or not at all. The module is marked
@@ -51,10 +57,13 @@
   layout: `.source` and `.sourceoverlay` beside the build id. Older debug
   outputs provide symbols and line numbers but not source.
 - A source file generated during the build is not part of `$src`. It is
-  reported as unresolved rather than guessed.
-- Rust standard library paths such as `/rustc/<hash>/library/...` are outside
-  the package source and are unresolved. They can be added with a source
-  directory if needed.
+  reported as `source-generated-file` rather than guessed.
+- Rust standard library paths such as `/rustc/<hash>/library/...` are mapped
+  automatically when a rust-src tree is discoverable through `NIX_SYM_RUST_SRC`,
+  `RUST_SRC_PATH`, `rustc --print sysroot`, or a rustup toolchain. Without a
+  tree, they remain unresolved and can be added with `--source-dir`.
+- The archive extractor rejects traversal and escaping entries, but a malicious
+  archive can still fail closed with `source-unsafe` rather than resolve.
 - Archive extraction supports the formats libarchive can read. Very unusual
   source archives may fail.
 - Source trees can be large. The cache is not automatically pruned.
@@ -95,9 +104,10 @@ compiler recorded, not a guarantee about the executing source line.
 
 ## gdb
 
-- The generated gdb init disables debuginfod for that session and relies on the
-  source mirror that `nix-sym` builds. If you rely on a debuginfod server for
-  files outside that mirror, edit the generated file or use gdb directly.
+- The generated gdb init disables debuginfod for that session, loads the
+  crashing executable with `file`, and relies on the source mirror that
+  `nix-sym` builds. If you rely on a debuginfod server for files outside that
+  mirror, edit the generated file or use gdb directly.
 - Paths containing spaces are skipped in the gdb script with a comment. Nix
   store paths do not contain spaces; a custom cache directory might.
 - The script points at the cache's decompressed core. Deleting the cache breaks
@@ -106,6 +116,7 @@ compiler recorded, not a guarantee about the executing source line.
 ## Scale
 
 - Cores with hundreds of mapped modules can be slow on a cold cache because
-  each Nix store module may require a subprocess call. Warm runs use the cache.
+  each Nix store module may require a subprocess call. Warm runs use the cache,
+  and the bounded resolver overlaps cold lookups.
 - Very large debug outputs can take time to fetch and disk space to store.
 - Symbolizing all threads can be expensive. Use `--thread` and `--max-frames`.

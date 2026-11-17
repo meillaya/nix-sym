@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "cli.hpp"
+#include "debuginfod.hpp"
 #include "demangle.hpp"
 #include "gdb.hpp"
 #include "json.hpp"
@@ -66,9 +67,11 @@ void test_json_render() {
   backtrace.modules.push_back(module);
   ThreadInfo thread;
   thread.tid = 7;
+  thread.name = "demo-worker";
   Frame frame;
   frame.index = 0;
-  frame.pc = 0x1234;
+  frame.pc = 0x7f001234;
+  frame.lookup_pc = 0x1234;
   frame.module_path = module.path;
   frame.module_name = module.name;
   frame.mangled = "_Z3foov";
@@ -82,6 +85,11 @@ void test_json_render() {
   frame.location.status = "available";
   thread.frames.push_back(frame);
   backtrace.threads.push_back(thread);
+
+  ThreadInfo unnamed_thread;
+  unnamed_thread.tid = 8;
+  backtrace.threads.push_back(unnamed_thread);
+
   backtrace.partial = true;
   std::string json = nix_sym::render_json(backtrace);
   CHECK(json.find("\"schema\": 1") != std::string::npos);
@@ -90,6 +98,15 @@ void test_json_render() {
   CHECK(json.find("\"mangled\": \"_Z3foov\"") != std::string::npos);
   CHECK(json.find("\"original\": \"/build/demo/main.cpp\"") != std::string::npos);
   CHECK(json.find("\"code\": \"") == std::string::npos);
+
+  // Thread names: present when known, null when unavailable. The runtime PC and
+  // the adjusted lookup PC are rendered separately for --stack runtime records.
+  CHECK(json.find("\"tid\": 7") != std::string::npos);
+  CHECK(json.find("\"name\": \"demo-worker\"") != std::string::npos);
+  CHECK(json.find("\"tid\": 8") != std::string::npos);
+  CHECK(json.find("\"name\": null") != std::string::npos);
+  CHECK(json.find("\"pc\": \"0x7f001234\"") != std::string::npos);
+  CHECK(json.find("\"lookup_pc\": \"0x1234\"") != std::string::npos);
 }
 
 void test_gdb_render() {
@@ -143,6 +160,39 @@ void test_cli() {
     CHECK(options.offline);
   }
   {
+    std::vector<std::string> args = {"nix-sym", "--stack", "/tmp/stack.txt", "--json"};
+    std::vector<char*> argv;
+    for (auto& arg : args)
+      argv.push_back(arg.data());
+    Options options = nix_sym::parse_cli(static_cast<int>(argv.size()), argv.data());
+    CHECK(options.stack == "/tmp/stack.txt");
+    CHECK(options.json);
+    CHECK(!options.gdb_init);
+  }
+  {
+    // --gdb-init cannot be used with --stack; --stack still works with --json.
+    std::vector<std::string> args = {"nix-sym", "--stack", "/tmp/stack.txt", "--gdb-init",
+                                     "/tmp/demo.gdb"};
+    std::vector<char*> argv;
+    for (auto& arg : args)
+      argv.push_back(arg.data());
+    bool threw = false;
+    try {
+      nix_sym::parse_cli(static_cast<int>(argv.size()), argv.data());
+    } catch (const nix_sym::UsageError&) {
+      threw = true;
+    }
+    CHECK(threw);
+  }
+  {
+    std::vector<std::string> args = {"nix-sym", "--pid", "4242"};
+    std::vector<char*> argv;
+    for (auto& arg : args)
+      argv.push_back(arg.data());
+    Options options = nix_sym::parse_cli(static_cast<int>(argv.size()), argv.data());
+    CHECK_EQ(options.pid, std::string("4242"));
+  }
+  {
     std::vector<std::string> args = {"nix-sym"};
     std::vector<char*> argv;
     for (auto& arg : args)
@@ -155,6 +205,22 @@ void test_cli() {
     }
     CHECK(threw);
   }
+}
+
+void test_debuginfod_find_executable() {
+  // The offline client is disabled, so build-id-only --stack records report a
+  // stack-build-id-unresolved warning instead of fetching.
+  nix_sym::DebuginfodClient client("/tmp/nix-sym-unit-debuginfod", {}, true);
+  CHECK(!client.enabled());
+  const nix_sym::DebuginfodResult fetched =
+      client.find_executable("00112233445566778899aabbccddeeff00112233");
+  CHECK(!fetched.ok);
+  CHECK(!fetched.error.empty());
+  CHECK(fetched.error.find("debuginfod is disabled") != std::string::npos);
+
+  const nix_sym::DebuginfodResult invalid = client.find_executable("not-a-build-id");
+  CHECK(!invalid.ok);
+  CHECK(invalid.error.find("build id") != std::string::npos);
 }
 
 void test_source_mapping() {
@@ -206,6 +272,7 @@ int main() {
   test_json_render();
   test_gdb_render();
   test_cli();
+  test_debuginfod_find_executable();
   test_source_mapping();
   test_source_maps();
   test_models();

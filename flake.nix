@@ -22,13 +22,13 @@
         "aarch64-linux"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      version = "0.2.0";
+      version = "0.3.0";
 
       mkDemoCpp =
         pkgs: src: separate:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-cpp";
-          version = "0.2.0";
+          version = "0.3.0";
           inherit src;
           separateDebugInfo = separate;
           postPatch = ''
@@ -46,7 +46,7 @@
         pkgs:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-rust";
-          version = "0.2.0";
+          version = "0.3.0";
           src = ./fixtures/demo-rust;
           nativeBuildInputs = [ pkgs.rustc ];
           separateDebugInfo = true;
@@ -63,7 +63,7 @@
         pkgs:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-live";
-          version = "0.2.0";
+          version = "0.3.0";
           src = ./fixtures/demo-live;
           separateDebugInfo = true;
           buildPhase = ''
@@ -78,7 +78,7 @@
         pkgs:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-haskell";
-          version = "0.2.0";
+          version = "0.3.0";
           src = ./fixtures/demo-haskell;
           nativeBuildInputs = [ pkgs.ghc ];
           separateDebugInfo = true;
@@ -165,7 +165,18 @@
           ];
         };
         format = pkgs.mkShell { packages = [ pkgs.clang-tools ]; };
-        fuzz = pkgs.mkShell { packages = [ pkgs.clang ]; };
+        fuzz = pkgs.mkShell {
+          packages = [
+            pkgs.clang
+            pkgs.elfutils
+            pkgs.elfutils.dev
+            pkgs.libarchive
+            pkgs.libarchive.dev
+            pkgs.pkg-config
+            pkgs.zstd
+            pkgs.zstd.dev
+          ];
+        };
         default = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [

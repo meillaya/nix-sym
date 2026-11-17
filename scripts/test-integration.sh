@@ -215,6 +215,15 @@ test_stack() {
   jq -e '.threads[0].frames | length > 0' "$json" >/dev/null || fail "stack: no frames"
   jq -e '[.threads[0].frames[] | select(.function.demangled | test("crash_here|leaf"))] | length > 0'     "$json" >/dev/null || fail "stack: no fixture function"
   jq -e '.threads[0].frames[0].source.line > 0' "$json" >/dev/null || fail "stack: no source line"
+
+  printf '%s %s @ %s\n' "$module" "$pc" "$start" >"$work/stack-runtime.txt"
+  runtime_json=$work/stack-runtime.json
+  "$nix_sym" --stack "$work/stack-runtime.txt" --json --no-fetch --no-debuginfod \
+    --cache-dir "$work/cache-stack" >"$runtime_json"
+  validate_json "$runtime_json"
+  jq -e --arg pc "$pc" --arg lookup "$rel" \
+    '.threads[0].frames[0] | .pc == $pc and .lookup_pc == $lookup' "$runtime_json" >/dev/null ||
+    fail "stack: runtime address conversion mismatch"
   note "ok: stack"
 }
 
@@ -271,7 +280,44 @@ test_live() {
     "$json" >/dev/null || fail "live: no fixture functions"
   jq -e '[.threads[].frames[] | select(.source.line > 0)] | length > 0' "$json" >/dev/null ||
     fail "live: no source line"
+  jq -e '[.threads[] | select(.name == "demo")] | length > 0' "$json" >/dev/null ||
+    fail "live: thread name was not captured"
   note "ok: live"
+}
+
+
+test_many_modules() {
+  local workdir=$work/many-modules
+  local json=$work/many-modules.json
+  scripts/make-many-modules-core.sh "$workdir" "$workdir/core" >/dev/null
+  "$nix_sym" --core "$workdir/core" --json --offline --cache-dir "$work/cache-many" >"$json"
+  validate_json "$json"
+  jq -e '.modules | length >= 100' "$json" >/dev/null || fail "many: fewer than 100 modules"
+  jq -e '.threads[0].frames | length > 0' "$json" >/dev/null || fail "many: no frames"
+  note "ok: many-modules ($(jq -r '.modules | length' "$json") modules)"
+}
+
+test_aarch64() {
+  local core=$root/.scratch/aarch64/core
+  if [[ ! -s "$core" ]]; then
+    note "SKIP: aarch64 core not present"
+    return
+  fi
+  local json=$work/aarch64.json
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-aarch64" >"$json"
+  validate_json "$json"
+  jq -e '.status == "complete"' "$json" >/dev/null || fail "aarch64: status is not complete"
+  jq -e '[.threads[].frames[] | select(.function.demangled == "crash_here")] | length > 0' "$json" \
+    >/dev/null || fail "aarch64: crash_here was not symbolized"
+  note "ok: aarch64"
+}
+
+test_debuginfod_bad_response() {
+  if ! bash tests/integration/debuginfod_bad_response.sh >/dev/null 2>&1; then
+    fail "debuginfod: malformed response handling failed"
+    return
+  fi
+  note "ok: debuginfod bad responses"
 }
 
 test_cpp "cpp" "fixture-demo-cpp"
@@ -284,6 +330,9 @@ test_stack
 test_live
 test_haskell
 test_source_map
+test_many_modules
+test_aarch64
+test_debuginfod_bad_response
 
 if ((failures > 0)); then
   echo "$failures integration test(s) failed" >&2

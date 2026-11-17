@@ -318,6 +318,35 @@ DebuginfodResult DebuginfodClient::find_source(const std::string& build_id_hex,
   return finish_find(return_value, path, "debuginfod_find_source", build_id, saved_errno);
 }
 
+DebuginfodResult DebuginfodClient::find_executable(const std::string& build_id_hex) {
+  std::string build_id;
+  std::string error;
+  if (!normalize_build_id(build_id_hex, &build_id, &error)) {
+    return {false, {}, std::move(error)};
+  }
+
+  debuginfod_client* client = nullptr;
+  std::string disabled_reason;
+  {
+    std::lock_guard<std::mutex> lock(impl_->client_mutex);
+    client = impl_->client;
+    if (client == nullptr) {
+      disabled_reason =
+          impl_->disabled_reason.empty() ? "debuginfod client is disabled" : impl_->disabled_reason;
+    }
+  }
+  if (client == nullptr) {
+    return {false, {}, std::move(disabled_reason)};
+  }
+
+  char* path = nullptr;
+  errno = 0;
+  const int return_value = debuginfod_find_executable(
+      client, reinterpret_cast<const unsigned char*>(build_id.c_str()), 0, &path);
+  const int saved_errno = errno;
+  return finish_find(return_value, path, "debuginfod_find_executable", build_id, saved_errno);
+}
+
 std::string DebuginfodClient::install_debuginfo(const std::string& build_id_hex,
                                                 const std::string& fetched_path,
                                                 std::string* error) {

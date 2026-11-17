@@ -31,10 +31,20 @@ directly.
 caller must have ptrace permission. The process is stopped while frames are
 read and resumed when the command exits.
 
-`--stack FILE` reads a list of module-relative addresses from a file or from
-stdin with `-`. The format is `MODULE ADDRESS [BUILD-ID]` per line; a line with
-only an address reuses the previous module. Addresses are link-time addresses,
-so subtract the module load base from a runtime PC first.
+`--stack FILE` reads a list of addresses from a file or from stdin with `-`.
+Each non-comment line is one of:
+
+```
+MODULE ADDRESS [BUILD-ID]           link-time address
+MODULE RUNTIME_ADDRESS @ LOAD_BASE  runtime address and load base
+BUILD-ID ADDRESS [@ LOAD_BASE]      resolve the executable by build id
+ADDRESS                             reuse the previous module/build id
+```
+
+`#` starts a comment. Runtime forms subtract `LOAD_BASE` for symbol and DWARF
+lookup and keep the supplied runtime address in `pc`. Build-id-only records
+need `--debuginfod` (or `DEBUGINFOD_URLS`); without it they produce a
+`stack-build-id-unresolved` warning and the remaining records still symbolize.
 
 ```sh
 coredumpctl list
@@ -67,8 +77,8 @@ Selection flags:
 | `--no-inline` | Do not print inline frames. |
 | `--no-demangle` | Keep the raw symbol names. |
 | `--strict` | Exit 2 when the result is partial. |
-| `--pid PID` | Attach to a live process. |
-| `--stack FILE` | Symbolize module-relative addresses. |
+| `--pid PID` | Attach to a live process; thread names come from `/proc`. |
+| `--stack FILE` | Symbolize link-time, runtime, or build-id-only addresses. |
 
 ## JSON
 
@@ -96,8 +106,8 @@ nix-sym --core core.123 --gdb-init nix-sym.gdb
 gdb -x nix-sym.gdb
 ```
 
-The generated file points gdb at the resolved debug outputs and source roots.
-It includes the `core-file` command. `--gdb-init -` writes the script to stdout
+The generated file points gdb at the resolved debug outputs and source roots,
+selects the crashing executable with `file`, and includes `core-file`. `--gdb-init -` writes the script to stdout
 and cannot be combined with `--json`.
 
 Source extraction is on by default for `--gdb-init`. Use `--no-extract` when
@@ -142,12 +152,21 @@ checks.
 `--debug-dir DIR` adds a debug file directory for modules that are not in the
 Nix store. Repeat the flag for several directories.
 
+To check debuginfod plus gdb source end to end, run
+`scripts/test-debuginfod-gdb.sh` with `NIX_SYM_DEBUGINFOD_URL` set.
+
 `--source-dir PREFIX=DIR` maps a DWARF source prefix to a local directory. It
-handles Rust standard library paths and local source checkouts:
+handles local source checkouts and overrides the automatic Rust mapping:
 
 ```sh
 nix-sym --core core.123 --json --source-dir /rustc/58cf8f9c=/path/to/rust-src
 ```
+
+Rust standard library paths such as `/rustc/<hash>/library/...` are mapped
+automatically when a rust-src tree is discoverable. `nix-sym` checks
+`NIX_SYM_RUST_SRC`, `RUST_SRC_PATH`, the `rustc --print sysroot` tree, and
+rustup toolchains. Generated files that are missing from the source tree get
+the `source-generated-file` status.
 
 Repeat the flag for several mappings. The mapping is also emitted as a gdb
 `substitute-path` line.

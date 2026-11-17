@@ -58,3 +58,61 @@ outputs are the dominant cause of partial results, which is why 0.2 adds:
 
 A second pass should rebuild the local Rust programs with `separateDebugInfo`
 and run the same table with a debuginfod server enabled.
+
+## Second pass: debug information and new inputs
+
+The second pass reran the hard cases with debug information available, added
+separate-debug Rust and C++ fixtures, a 111-module real core, a QEMU aarch64
+core, live attach, and a stack file. It used the 0.3 code.
+
+```sh
+nix-sym --core core.PID --json --offline --cache-dir cache/PID
+nix-sym --core foreign.core --json --no-fetch --nix-bin /bin/false \
+  --debuginfod http://127.0.0.1:1970 --cache-dir cache/foreign
+```
+
+| Case | Status | Frames | Resolved modules | Debuginfod modules | Frames with source | Time (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Rust fixture, separate debug | partial | 9 | 1 | 0 | 4 | 864 |
+| C++ fixture, separate debug | partial | 5 | 1 | 0 | 2 | 219 |
+| hoard local debug build | partial | 8 | 0 | 0 | 6 | 47 |
+| hoard store core, debuginfod | partial | 64 | 2 | 2 | 3 | 841 |
+| Chrome headless, local prebuilt | partial | 535 | 0 | 0 | 140 | 1458 |
+| Electron, Nix prebuilt | partial | 26 | 0 | 0 | 0 | 4481 |
+| hoard, Nix separateDebugInfo rebuild | partial | 4 | 1 | 0 | 0 | 58 |
+| aarch64 QEMU core | complete | 4 | 0 | 0 | 4 | 12 |
+| 104-module synthetic core | partial | 4 | 0 | 0 | 0 | 30-38 |
+| live fixture | partial | 7 | 1 | 0 | 1 | 900 |
+
+The hoard store core was forced through debuginfod with `--nix-bin /bin/false`.
+Two glibc modules were resolved by build id and three source files were fetched
+into the debuginfod source mirror. The generated gdb init loaded the hoard
+executable, used the fetched debug directories, and `gdb -ex 'list'` printed
+`pthread_kill.c` from the mirror. The reproducibility script is
+[`scripts/test-debuginfod-gdb.sh`](../scripts/test-debuginfod-gdb.sh).
+
+The hoard `separateDebugInfo` rebuild came from the current hoard source with
+`separateDebugInfo = true` added to its flake package. It proves that a real
+Rust Nix package with a debug output resolves through the normal Nix path. The
+core was taken at `main` with gdb; it is not a crash reproducer.
+
+The aarch64 core is a real kernel `ET_CORE` from a QEMU TCG guest. See
+[aarch64](aarch64.md) for provenance and the reproduction script.
+
+The live fixture reported its thread name (`demo`) and a source line. The Rust
+stack file reported `main::crash_here` and, with a discovered rust-src tree,
+resolved the `/rustc/<hash>/library/...` path.
+
+## What the second pass showed
+
+- The first pass's partial results were mostly missing debug outputs. When a
+  debug output exists, symbols, inline frames, and source work at the same
+  level as gdb.
+- Debuginfod closes the cross-machine gap for system and Nix modules that the
+  local store cannot resolve.
+- The aarch64 path works for reading and unwinding a foreign-architecture core
+  when the module files are available at the paths recorded in `NT_FILE`.
+- Live attach and stack input are no longer toy paths. Both are covered by the
+  integration suite and the real-core table above.
+- The remaining gaps are source availability (generated and Rust standard
+  library paths), not core reading or symbolization.

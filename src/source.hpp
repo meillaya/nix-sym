@@ -39,6 +39,8 @@ private:
   std::string cache_root_;
   bool materialize_;
   bool verbose_;
+  std::string rust_source_root_;
+  bool rust_source_root_probed_ = false;
   std::vector<std::pair<std::string, std::string>> source_maps_;
   DebuginfodClient* debuginfod_ = nullptr;
   std::map<std::string, SourceMapping> mappings_;
@@ -55,6 +57,7 @@ private:
                               const std::string& root_hint, const std::string& destination,
                               std::string* status);
   std::string find_source_root(const std::string& base, const std::string& root_hint);
+  std::string discover_rust_source_root();
 };
 
 } // namespace nix_sym

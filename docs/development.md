@@ -35,13 +35,22 @@ dependency set.
 - `build/haskell_demangle_test`: GHC z-encoding vectors.
 - `build/debuginfod_test`: disabled, cache, install, and source mirror
   behavior without network.
-- `build/stack_test`: stack file parsing and error cases.
+- `build/stack_test`: stack parsing (link-time, runtime, build-id-only) and
+  error cases.
+- `build/core_reader_test`: malformed, truncated, non-ELF, invalid-zstd, and
+  bounded-note core inputs.
+- `build/archive_test`: archive/overlay traversal, symlink, device, limit, and
+  SourceResolver regression cases.
+- `build/source_auto_test`: automatic `/rustc` mapping, explicit map
+  precedence, and generated-file status.
+- `fuzz/stack_fuzz`, `fuzz/core_fuzz`, and `fuzz/archive_fuzz` cover the
+  untrusted parser paths.
 
 Unit tests run inside the Nix build. They do not need a core dump.
 
 ## Fixtures
 
-The flake exposes four fixture packages:
+The flake exposes these fixture packages:
 
 | Attribute | What it tests |
 | --- | --- |
@@ -79,8 +88,11 @@ The script:
 4. Validates JSON against the schema.
 5. Checks frames, inline frames, source lines, module resolution, and gdb
    source listing.
-6. Tests `--offline`, stdin, caching, the no-debug fixture, live attach,
-   stack input, Haskell demangling, and source overrides.
+6. Tests `--offline`, stdin, caching, the no-debug fixture, live attach with
+   thread names, stack input (link-time, runtime, and reuse forms), Haskell
+   demangling, source overrides, malformed debuginfod responses, and a
+   104-module synthetic core.
+7. Runs the aarch64 core test when `.scratch/aarch64/core` exists.
 
 Core generation uses `gcore` first. If ptrace is unavailable, it falls back to
 a kernel core or `coredumpctl`. Set `NIX_SYM_REQUIRE_CORE=1` to make a missing
@@ -134,7 +146,9 @@ The CI workflow runs:
 - `devenv test`
 - the integration script with `NIX_SYM_REQUIRE_CORE=1`
 - ASan and UBSan via `scripts/check-sanitize.sh`
-- libFuzzer via `scripts/check-fuzz.sh`
+- libFuzzer over demanglers, JSON, core, archive, and stack parsers via
+  `scripts/check-fuzz.sh`
+- a QEMU aarch64 core run via `scripts/aarch64-core.sh`
 - a format check with `clang-format --dry-run --Werror`
 
 Integration runs outside the Nix build sandbox so gdb, gcore, and ptrace are
@@ -156,6 +170,25 @@ nix-sym --core foreign.core --json --nix-bin /bin/false \
 
 The server logs `/buildid/...` requests. A glibc core shows `debuginfod: true`
 on the glibc modules and source frames under `debuginfod-sources`.
+
+For the gdb source path, keep a core with glibc frames and run:
+
+```sh
+NIX_SYM_DEBUGINFOD_URL=http://127.0.0.1:1949 \
+  scripts/test-debuginfod-gdb.sh path/to/core
+```
+
+The script forces Nix resolution to fail, generates a gdb init file, and checks
+that gdb lists a fetched glibc source file. It also verifies that at least one
+module has `"debuginfod": true`.
+
+## aarch64 testing
+
+`scripts/aarch64-core.sh` fetches a pinned Alpine aarch64 kernel and
+minirootfs, cross-compiles `fixtures/aarch64/fixture.c`, boots QEMU, transfers
+a real kernel core over the serial console, verifies `AArch64`/`ET_CORE`, and
+runs `nix-sym` on it. See [aarch64](aarch64.md). It needs qemu, clang, lld,
+cpio, and python3; CI runs it in a separate job.
 
 ## Style
 

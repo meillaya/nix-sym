@@ -127,7 +127,8 @@ pins the same nixpkgs revision as hoard to reuse the local store and cache.
 The CI workflow runs:
 
 - `nix flake check`
-- `nix flake check --all-systems --no-build` for aarch64 evaluation
+- `nix eval .#packages.aarch64-linux.nix-sym.name` and the matching check
+  derivation path for aarch64 evaluation
 - `nix build .#nix-sym`
 - `devenv test`
 - the integration script with `NIX_SYM_REQUIRE_CORE=1`

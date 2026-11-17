@@ -70,7 +70,9 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - name: Demangler and JSON fuzz targets
-        run: nix develop --impure --command bash scripts/check-fuzz.sh
+        run: >-
+          nix shell github:NixOS/nixpkgs/d5cc6833999746cffdfe0598f7bc801a57b887a9#clang
+          -c bash scripts/check-fuzz.sh
 
   format:
     name: format / linux

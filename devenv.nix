@@ -7,7 +7,6 @@
   packages = with pkgs; [
     binutils
     cacert
-    clang
     clang-tools
     coreutils
     curl

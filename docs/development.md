@@ -11,7 +11,8 @@ devenv, and the dev shell supplies:
 - zstd and libarchive
 - gdb, eu-stack, and addr2line
 - nix, jq, and Python with jsonschema
-- clang for the libFuzzer targets
+- clang separately for the libFuzzer targets. CI provides it with `nix shell`;
+  local users need a clang++ with libFuzzer on `PATH`.
 
 ```sh
 nix develop --impure

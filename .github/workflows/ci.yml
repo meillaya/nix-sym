@@ -83,5 +83,5 @@ jobs:
             experimental-features = nix-command flakes
       - name: clang-format
         run: >
-          nix develop --impure --command
+          nix develop .#format --command
           bash -c 'clang-format --dry-run --Werror src/*.cpp src/*.hpp tests/*.cpp tests/unit/*.cpp'

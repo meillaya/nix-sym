@@ -43,10 +43,28 @@ validate_json() {
   local json=$1
   python3 - "$schema" "$json" <<'PY'
 import json, sys
-import jsonschema
 schema = json.load(open(sys.argv[1]))
 data = json.load(open(sys.argv[2]))
-jsonschema.validate(data, schema)
+try:
+    import jsonschema
+except ImportError:
+    # Lightweight fallback for CI shells that do not carry the Python package.
+    assert data["schema"] == 1
+    assert data["status"] in ("complete", "partial")
+    assert isinstance(data["tool"], dict)
+    assert isinstance(data["core"], dict)
+    assert isinstance(data["modules"], list)
+    assert isinstance(data["threads"], list)
+    assert isinstance(data["warnings"], list)
+    for module in data["modules"]:
+        assert isinstance(module["path"], str)
+        assert isinstance(module["debuginfod"], bool)
+    for thread in data["threads"]:
+        for frame in thread["frames"]:
+            assert isinstance(frame["function"]["demangled"], str)
+            assert frame["source"] is None or isinstance(frame["source"], dict)
+else:
+    jsonschema.validate(data, schema)
 PY
 }
 

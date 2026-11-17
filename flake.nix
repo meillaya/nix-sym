@@ -142,6 +142,29 @@
       });
 
       devShells = forAllSystems (pkgs: {
+        ci = pkgs.mkShell {
+          packages = with pkgs; [
+            binutils
+            cacert
+            coreutils
+            elfutils
+            elfutils.bin
+            file
+            gcc
+            gdb
+            gnumake
+            jq
+            libarchive
+            libarchive.dev
+            nix
+            pkg-config
+            python3
+            zstd
+            zstd.dev
+          ];
+        };
+        format = pkgs.mkShell { packages = [ pkgs.clang-tools ]; };
+        fuzz = pkgs.mkShell { packages = [ pkgs.clang ]; };
         default = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [

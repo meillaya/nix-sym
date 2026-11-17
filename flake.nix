@@ -149,6 +149,7 @@
             coreutils
             elfutils
             elfutils.bin
+            elfutils.dev
             file
             gcc
             gdb

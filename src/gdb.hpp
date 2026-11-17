@@ -9,6 +9,6 @@
 namespace nix_sym {
 
 std::string render_gdb_init(const Backtrace& backtrace, const std::string& core_path,
-                            const std::vector<SourceMapping>& mappings);
+                            const std::vector<SourceMapping>& mappings, bool live = false);
 
 } // namespace nix_sym

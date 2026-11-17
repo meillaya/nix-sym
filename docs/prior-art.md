@@ -38,14 +38,14 @@ The tool and the server solve different problems:
 | | nixseparatedebuginfod2 | nix-sym |
 | --- | --- | --- |
 | Shape | Long-running server | One-shot CLI |
-| Transport | HTTP debuginfod | Local store, then `nix copy` |
+| Transport | HTTP debuginfod | Local store, `nix copy`, then debuginfod |
 | Primary client | gdb, valgrind | Shell, CI, agents, gdb |
 | Output | Debug files and source | Text, JSON, gdb init |
 | Offline | Local store mode | `--offline` |
 | Source | Served on request | Extracted and mapped |
 
-A future release can use a debuginfod client for cross-machine cores. The
-0.1 release does not.
+0.2 adds an optional debuginfod client for cross-machine cores and mirrors
+fetched source for gdb. The server remains an external service.
 
 ## systemd-coredump
 

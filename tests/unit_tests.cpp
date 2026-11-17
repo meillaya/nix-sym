@@ -1,4 +1,6 @@
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -101,11 +103,17 @@ void test_gdb_render() {
   mapping.root = "demo";
   mapping.resolved_root = "/cache/sources/demo";
   mapping.status = "resolved";
-  std::string gdb = nix_sym::render_gdb_init(backtrace, "/tmp/core", {mapping});
+  std::string gdb = nix_sym::render_gdb_init(backtrace, "/tmp/core", {mapping}, false);
   CHECK(gdb.find("set pagination off") != std::string::npos);
   CHECK(gdb.find("set debuginfod enabled off") != std::string::npos);
   CHECK(gdb.find("core-file /tmp/core") != std::string::npos);
   CHECK(gdb.find("set substitute-path /build/demo /cache/sources/demo") != std::string::npos);
+
+  Backtrace live;
+  live.core.pid = 4242;
+  std::string live_gdb = nix_sym::render_gdb_init(live, "", {mapping}, true);
+  CHECK(live_gdb.find("attach 4242") != std::string::npos);
+  CHECK(live_gdb.find("core-file") == std::string::npos);
 }
 
 void test_cli() {
@@ -161,6 +169,28 @@ void test_source_mapping() {
   CHECK_EQ(resolver.mappings().size(), static_cast<size_t>(1));
 }
 
+void test_source_maps() {
+  namespace fs = std::filesystem;
+  fs::path directory = fs::temp_directory_path() / "nix-sym-source-map-test";
+  fs::create_directories(directory / "src");
+  {
+    std::ofstream output(directory / "src/main.cpp");
+    output << "int main() { return 0; }\n";
+  }
+  nix_sym::SourceResolver resolver("/tmp/nix-sym-test-cache", false, false,
+                                   {"/build/demo=" + directory.string()}, nullptr);
+  nix_sym::ModuleInfo module;
+  module.path = "/nix/store/abc-demo";
+  module.build_id = "00112233";
+  nix_sym::SourceLocation location =
+      resolver.map(module, "/build/demo", "/build/demo/src/main.cpp");
+  CHECK(location.valid);
+  CHECK_EQ(location.status, "resolved");
+  CHECK_EQ(location.resolved, (directory / "src/main.cpp").string());
+  CHECK_EQ(resolver.mappings().size(), static_cast<size_t>(1));
+  fs::remove_all(directory);
+}
+
 void test_models() {
   CHECK_EQ(std::string(nix_sym::module_status_name(ModuleStatus::Resolved)), "resolved");
   CHECK_EQ(std::string(nix_sym::module_status_name(ModuleStatus::MissingDebug)), "missing-debug");
@@ -177,6 +207,7 @@ int main() {
   test_gdb_render();
   test_cli();
   test_source_mapping();
+  test_source_maps();
   test_models();
   if (failures == 0) {
     std::cout << "unit tests passed\n";

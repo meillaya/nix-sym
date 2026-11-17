@@ -15,8 +15,10 @@ It can also write a gdb init file for interactive work.
 
 ```
 nix-sym --core core.123 --bt --json
-nix-sym --core core.123 --gdb-init nix-sym.gdb
 nix-sym --from-coredumpctl 1234 --json
+nix-sym --pid 1234 --json
+nix-sym --stack addresses.txt --json
+nix-sym --core core.123 --gdb-init nix-sym.gdb
 ```
 
 ## Why this exists
@@ -39,6 +41,9 @@ paths.
   z-encoded names.
 - It maps `/build/...` paths back to the source archive or directory, including
   files changed by patches.
+- It attaches to a live process with `--pid` and symbolizes a coreless
+  module-relative address list with `--stack`.
+- It can fall back to a debuginfod server for cores from another machine.
 - It emits a gdb init file with the right debug directories and source
   substitutions.
 
@@ -95,6 +100,22 @@ Thread 1234
 REGEX` keeps frames with a matching demangled name. `--no-inline` and
 `--no-demangle` turn off the two enrichment passes.
 
+`--pid PID` attaches to a live process with ptrace. It uses the same module
+resolution, source mapping, and JSON output. The process must be dumpable and
+the caller must have permission to trace it.
+
+`--stack FILE` reads module-relative addresses for cores or crash reports that
+contain no memory image:
+
+```
+# MODULE ADDRESS [BUILD-ID]
+/nix/store/.../bin/demo 0x1187 c36966051dcc87a30f7ac34a81287ee60a9e1df1
+/nix/store/.../bin/demo 0x1079
+```
+
+Addresses are link-time addresses. Subtract the load base from a runtime PC
+before writing the file. A one-token line reuses the previous module.
+
 A core from `systemd-coredump` is usually compressed. Pass the `.zst` file
 directly, pass a decompressed file, or use `coredumpctl`:
 
@@ -144,10 +165,18 @@ For each module in the core, `nix-sym`:
    substituters from `nix config show substituters`.
 4. Falls back to a build id search under `/nix/store/*-debug` when the
    derivation is gone.
+5. If that fails and a debuginfod URL is configured, asks the server by build
+   id. This is the path for a core from another machine. `--debuginfod URL`
+   repeats; `DEBUGINFOD_URLS` is used when no flag is given.
 
 Fetches never build by default. Pass `--build-missing` to allow
-`nix-store --realise` to build a missing debug output. `--no-fetch` and
-`--offline` keep the command local.
+`nix-store --realise` to build a missing debug output. `--no-fetch` skips Nix
+substituter fetches; `--offline` disables both Nix fetches and debuginfod.
+`--no-debuginfod` disables the debuginfod environment list.
+
+Debuginfod downloads are cached under `$XDG_CACHE_HOME/nix-sym/debuginfod-client`.
+Source files fetched from a server are mirrored under
+`debuginfod-sources` for gdb.
 
 Resolutions are cached by build id in `$XDG_CACHE_HOME/nix-sym`. Source
 archives and overlays are cached by source and overlay identity. A second run
@@ -177,13 +206,13 @@ unless the derivation's `src` can be found.
 
 ## Scope and limits
 
-The tool targets Linux ELF core dumps on x86_64 and aarch64. It does not attach
-to live processes, read kernel cores, handle macOS, or promise GHC runtime stack
-unwinding. Rust v0 support covers the common subset of the mangling grammar and
+The tool targets Linux cores, live processes, and module-relative address lists
+on x86_64 and aarch64. It does not read kernel cores, handle macOS, or promise
+GHC runtime stack unwinding. Rust v0 support covers the common subset of the mangling grammar and
 falls back to the raw name with a warning when it cannot parse a symbol.
 
 Read [docs/limitations.md](docs/limitations.md) before relying on it for a
-cross-machine core or a package without a debug output.
+live process, a cross-machine core, or a package without a debug output.
 
 ## Development
 
@@ -195,10 +224,15 @@ scripts/test-integration.sh
 
 The integration script builds the fixture derivations, generates cores with
 `gcore`, and checks frames, inline information, source extraction, gdb source
-listing, caching, and stdin input. Set `NIX_SYM_REQUIRE_CORE=1` in CI where a
-missing core must fail the job.
+listing, caching, stdin input, live attach, stack input, Haskell demangling,
+and source overrides. Set `NIX_SYM_REQUIRE_CORE=1` in CI where a missing core
+must fail the job.
 
-The design is in [docs/design.md](docs/design.md). The fixture programs are in
+`make sanitize` runs the ASan and UBSan suite. `make fuzz` runs the libFuzzer
+targets for the demanglers and JSON escaping.
+
+The design is in [docs/design.md](docs/design.md). The first ten-core pass is
+in [docs/dogfood.md](docs/dogfood.md). The fixture programs are in
 `fixtures/`.
 
 ## Licence

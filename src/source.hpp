@@ -8,6 +8,8 @@
 
 namespace nix_sym {
 
+class DebuginfodClient;
+
 struct SourceMapping {
   std::string module;
   std::string comp_dir;
@@ -21,7 +23,9 @@ struct SourceMapping {
 
 class SourceResolver {
 public:
-  SourceResolver(const std::string& cache_root, bool materialize, bool verbose);
+  SourceResolver(const std::string& cache_root, bool materialize, bool verbose,
+                 const std::vector<std::string>& source_dirs = {},
+                 DebuginfodClient* debuginfod = nullptr);
   ~SourceResolver() = default;
 
   SourceLocation map(const ModuleInfo& module, const std::string& comp_dir, const std::string& file,
@@ -35,6 +39,8 @@ private:
   std::string cache_root_;
   bool materialize_;
   bool verbose_;
+  std::vector<std::pair<std::string, std::string>> source_maps_;
+  DebuginfodClient* debuginfod_ = nullptr;
   std::map<std::string, SourceMapping> mappings_;
 
   SourceMapping module_mapping(const ModuleInfo& module);

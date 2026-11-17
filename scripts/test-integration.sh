@@ -58,7 +58,7 @@ test_cpp() {
   core=$work/$name.core
   core_from "$out/bin/demo" "$core" || return 0
   json=$work/$name.json
-  "$nix_sym" --core "$core" --json --no-fetch --cache-dir "$work/cache-$name" >"$json"
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-$name" >"$json"
   validate_json "$json"
   jq -e '.threads | length > 0' "$json" >/dev/null || fail "$name: no threads"
   jq -e '[.threads[].frames[] | select(.function.demangled | test("crash_here|leaf"))] | length > 0' \
@@ -93,7 +93,7 @@ test_cpp() {
   fi
 
   local gdb_init=$work/$name.gdb
-  "$nix_sym" --core "$core" --gdb-init "$gdb_init" --no-fetch --cache-dir "$work/cache-$name" >/dev/null
+  "$nix_sym" --core "$core" --gdb-init "$gdb_init" --no-fetch --no-debuginfod --cache-dir "$work/cache-$name" >/dev/null
   if ! gdb -q -batch -x "$gdb_init" -ex "list patched_value" 2>&1 | grep -q PATCHED; then
     fail "$name: gdb does not show the patched source"
   fi
@@ -111,7 +111,7 @@ test_rust() {
   core=$work/rust.core
   core_from "$out/bin/demo" "$core" || return 0
   json=$work/rust.json
-  "$nix_sym" --core "$core" --json --no-fetch --cache-dir "$work/cache-rust" >"$json"
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-rust" >"$json"
   validate_json "$json"
   jq -e '[.threads[].frames[] | select(.function.language == "rust")] | length > 0' "$json" >/dev/null ||
     fail "rust: no rust frames"
@@ -128,7 +128,7 @@ test_nodbg() {
   core=$work/nodbg.core
   core_from "$out/bin/demo" "$core" || return 0
   json=$work/nodbg.json
-  "$nix_sym" --core "$core" --json --no-fetch --cache-dir "$work/cache-nodbg" >"$json"
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-nodbg" >"$json"
   validate_json "$json"
   jq -e '.status == "partial"' "$json" >/dev/null || fail "nodbg: status is not partial"
   jq -e '[.warnings[].code | select(. == "debug-info-missing")] | length > 0' "$json" >/dev/null ||
@@ -142,7 +142,7 @@ test_cache() {
   core=$work/cache.core
   core_from "$out/bin/demo" "$core" || return 0
   rm -rf "$work/cache-hit"
-  "$nix_sym" --core "$core" --json --no-fetch --cache-dir "$work/cache-hit" >/dev/null
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-hit" >/dev/null
   cat >"$work/fail-nix" <<'SH'
 #!/bin/sh
 echo "$*" >>"$NIX_SYM_NIX_LOG"
@@ -153,7 +153,7 @@ SH
   : >"$log"
   json=$work/cache.json
   NIX_SYM_NIX_LOG="$log" "$nix_sym" --core "$core" --json --cache-dir "$work/cache-hit" \
-    --nix-bin "$work/fail-nix" --no-fetch >"$json"
+    --nix-bin "$work/fail-nix" --no-fetch --no-debuginfod >"$json"
   validate_json "$json"
   if [[ -s "$log" ]]; then
     fail "cache: second run still invoked nix"
@@ -167,10 +167,93 @@ test_stdin() {
   core=$work/stdin.core
   core_from "$out/bin/demo" "$core" || return 0
   json=$work/stdin.json
-  cat "$core" | "$nix_sym" --core - --json --no-fetch --cache-dir "$work/cache-stdin" >"$json"
+  cat "$core" | "$nix_sym" --core - --json --no-fetch --no-debuginfod --cache-dir "$work/cache-stdin" >"$json"
   validate_json "$json"
   jq -e '.core.path == "-"' "$json" >/dev/null || fail "stdin: core path is not -"
   note "ok: stdin"
+}
+
+
+test_stack() {
+  local out core json module pc start rel
+  out=$(fixture fixture-demo-cpp)
+  core=$work/stack.core
+  core_from "$out/bin/demo" "$core" || return 0
+  module=$("$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-stack" |
+    jq -r '.threads[0].frames[0].module')
+  pc=$("$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-stack" |
+    jq -r '.threads[0].frames[0].pc')
+  start=$(eu-stack -l --core "$core" 2>/dev/null |
+    awk 'NR == 2 { split($1, parts, "-"); print parts[1]; exit }')
+  if [[ -z "$module" || -z "$pc" || -z "$start" ]]; then
+    fail "stack: cannot derive a module-relative address"
+    return
+  fi
+  rel=$(python3 -c 'import sys; print(hex(int(sys.argv[1], 16) - int(sys.argv[2], 16)))' "$pc" "$start")
+  printf '%s %s\n' "$module" "$rel" >"$work/stack.txt"
+  json=$work/stack.json
+  "$nix_sym" --stack "$work/stack.txt" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-stack" >"$json"
+  validate_json "$json"
+  jq -e '.threads[0].frames | length > 0' "$json" >/dev/null || fail "stack: no frames"
+  jq -e '[.threads[0].frames[] | select(.function.demangled | test("crash_here|leaf"))] | length > 0'     "$json" >/dev/null || fail "stack: no fixture function"
+  jq -e '.threads[0].frames[0].source.line > 0' "$json" >/dev/null || fail "stack: no source line"
+  note "ok: stack"
+}
+
+test_source_map() {
+  local out core json override
+  out=$(fixture fixture-demo-cpp)
+  core=$work/source-map.core
+  core_from "$out/bin/demo" "$core" || return 0
+  override=$work/override
+  mkdir -p "$override/src"
+  printf 'overridden source\n' >"$override/src/main.cpp"
+  json=$work/source-map.json
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --source-dir "/build/demo-cpp=$override" \
+    --cache-dir "$work/cache-source-map" >"$json"
+  validate_json "$json"
+  jq -e --arg prefix "$override" \
+    '[.threads[].frames[].source | select(.resolved != null and (.resolved | startswith($prefix)))] | length > 0' \
+    "$json" >/dev/null || fail "source-map: override was not used"
+  note "ok: source-map"
+}
+
+
+test_haskell() {
+  local out core json
+  out=$(fixture fixture-demo-haskell)
+  core=$work/haskell.core
+  core_from "$out/bin/demo" "$core" || return 0
+  json=$work/haskell.json
+  "$nix_sym" --core "$core" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-haskell" >"$json"
+  validate_json "$json"
+  jq -e '.threads[0].frames | length > 0' "$json" >/dev/null || fail "haskell: no frames"
+  jq -e '[.threads[].frames[] | select(.function.language == "haskell")] | length > 0' "$json" \
+    >/dev/null || fail "haskell: no haskell frames"
+  jq -e '[.threads[].frames[].function.demangled | select(test("^Main\\."))] | length > 0' "$json" \
+    >/dev/null || fail "haskell: no Main.* names"
+  jq -e '[.threads[].frames[] | select(.source.line > 0)] | length > 0' "$json" >/dev/null ||
+    fail "haskell: no source line"
+  note "ok: haskell"
+}
+
+test_live() {
+  local out json pid
+  out=$(fixture fixture-demo-live)
+  "$out/bin/demo" >/dev/null 2>&1 &
+  pid=$!
+  sleep 0.5
+  json=$work/live.json
+  "$nix_sym" --pid "$pid" --json --no-fetch --no-debuginfod --cache-dir "$work/cache-live" >"$json" || true
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  validate_json "$json"
+  jq -e '.core.pid > 0' "$json" >/dev/null || fail "live: no pid"
+  jq -e '[.threads[].frames[] | select(.function.demangled | test("inner|outer|main"))] | length > 0' \
+    "$json" >/dev/null || fail "live: no fixture functions"
+  jq -e '[.threads[].frames[] | select(.source.line > 0)] | length > 0' "$json" >/dev/null ||
+    fail "live: no source line"
+  note "ok: live"
 }
 
 test_cpp "cpp" "fixture-demo-cpp"
@@ -179,6 +262,10 @@ test_rust
 test_nodbg
 test_cache
 test_stdin
+test_stack
+test_live
+test_haskell
+test_source_map
 
 if ((failures > 0)); then
   echo "$failures integration test(s) failed" >&2

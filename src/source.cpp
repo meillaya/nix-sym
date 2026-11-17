@@ -1,5 +1,7 @@
 #include "source.hpp"
 
+#include "debuginfod.hpp"
+
 #include <fcntl.h>
 
 #include <archive.h>
@@ -232,8 +234,27 @@ bool apply_overlay(const std::string& destination, const std::string& overlay,
 
 } // namespace
 
-SourceResolver::SourceResolver(const std::string& cache_root, bool materialize, bool verbose)
-    : cache_root_(cache_root), materialize_(materialize), verbose_(verbose) {}
+SourceResolver::SourceResolver(const std::string& cache_root, bool materialize, bool verbose,
+                               const std::vector<std::string>& source_dirs,
+                               DebuginfodClient* debuginfod)
+    : cache_root_(cache_root), materialize_(materialize), verbose_(verbose),
+      debuginfod_(debuginfod) {
+  for (const auto& mapping : source_dirs) {
+    auto equals = mapping.find('=');
+    if (equals == std::string::npos || equals == 0 || equals + 1 >= mapping.size()) {
+      continue;
+    }
+    std::string prefix = mapping.substr(0, equals);
+    std::string directory = mapping.substr(equals + 1);
+    while (prefix.size() > 1 && prefix.back() == '/') {
+      prefix.pop_back();
+    }
+    while (directory.size() > 1 && directory.back() == '/') {
+      directory.pop_back();
+    }
+    source_maps_.emplace_back(prefix, directory);
+  }
+}
 
 SourceMapping SourceResolver::module_mapping(const ModuleInfo& module) {
   SourceMapping mapping;
@@ -519,6 +540,32 @@ SourceLocation SourceResolver::map(const ModuleInfo& module, const std::string& 
   }
   location.original = full_file;
 
+  for (const auto& [prefix, directory] : source_maps_) {
+    if (full_file.rfind(prefix, 0) != 0) {
+      continue;
+    }
+    std::string suffix = full_file.substr(prefix.size());
+    if (!suffix.empty() && suffix.front() != '/') {
+      suffix.insert(suffix.begin(), '/');
+    }
+    std::string candidate = directory + suffix;
+    SourceMapping mapping;
+    mapping.module = "source-map";
+    mapping.comp_dir = prefix;
+    mapping.root = basename(prefix);
+    mapping.kind = "directory";
+    mapping.resolved_root = directory;
+    mapping.status = is_regular(candidate) ? "resolved" : "source-missing";
+    mappings_.insert_or_assign("source-map|" + prefix, mapping);
+    if (is_regular(candidate)) {
+      location.resolved = candidate;
+      location.status = "resolved";
+    } else {
+      location.status = "source-missing";
+    }
+    return location;
+  }
+
   if (!normalized_comp_dir.empty() && path_is_within(full_file, normalized_comp_dir)) {
     root_path = normalized_comp_dir;
     relative = full_file.substr(normalized_comp_dir.size());
@@ -581,6 +628,41 @@ SourceLocation SourceResolver::map(const ModuleInfo& module, const std::string& 
   } else {
     location.status = mapping.status;
   }
+  if (location.status == "resolved" || debuginfod_ == nullptr || !debuginfod_->enabled() ||
+      module.build_id.empty()) {
+    return location;
+  }
+
+  std::string remote_source = full_file;
+  if (remote_source.find("/../") != std::string::npos) {
+    remote_source = std::filesystem::path(remote_source).lexically_normal().string();
+  }
+  DebuginfodResult fetched = debuginfod_->find_source(module.build_id, remote_source);
+  if (!fetched.ok) {
+    location.status = "debuginfod-failed";
+    return location;
+  }
+  bool materialize = materialize_ || force_materialize;
+  if (materialize) {
+    std::string mirrored =
+        debuginfod_->install_source(module.build_id, remote_source, fetched.path);
+    if (mirrored.empty()) {
+      location.status = "debuginfod-failed";
+      return location;
+    }
+    location.resolved = mirrored;
+    SourceMapping remote;
+    remote.module = module.path.empty() ? module.name : module.path;
+    remote.comp_dir = root_path;
+    remote.root = root_name;
+    remote.kind = "debuginfod";
+    remote.resolved_root = debuginfod_->source_root() + root_path;
+    remote.status = "resolved";
+    mappings_.insert_or_assign("debuginfod|" + remote.module + "|" + root_path, remote);
+  } else {
+    location.resolved = fetched.path;
+  }
+  location.status = "debuginfod";
   return location;
 }
 

@@ -9,8 +9,9 @@ devenv, and the dev shell supplies:
 - pkg-config
 - elfutils (libdw, libelf, libdwfl)
 - zstd and libarchive
-- gdb and eu-stack
+- gdb, eu-stack, and addr2line
 - nix, jq, and Python with jsonschema
+- clang for the libFuzzer targets
 
 ```sh
 nix develop --impure
@@ -18,18 +19,22 @@ make -j"$(nproc)"
 make check
 ```
 
-The build links `libdw`, `libelf`, `libzstd`, and `libarchive`. There is no
-CMake and no third-party C++ JSON or CLI library. The JSON writer and argument
-parser are local so the binary has a small dependency set.
+The build links `libdw`, `libelf`, `libzstd`, `libarchive`, and
+`libdebuginfod`. There is no CMake and no third-party C++ JSON or CLI library.
+The JSON writer and argument parser are local so the binary has a small
+dependency set.
 
 ## Tests
 
 `make check` runs:
 
-- `build/unit_tests`: JSON, CLI, demangler dispatch, GDB rendering, and source
-  path mapping.
+- `build/unit_tests`: JSON, CLI, demangler dispatch, GDB rendering, live gdb
+  rendering, source path mapping, and source overrides.
 - `build/rust_demangle_test`: Rust legacy and v0 vectors.
 - `build/haskell_demangle_test`: GHC z-encoding vectors.
+- `build/debuginfod_test`: disabled, cache, install, and source mirror
+  behavior without network.
+- `build/stack_test`: stack file parsing and error cases.
 
 Unit tests run inside the Nix build. They do not need a core dump.
 
@@ -43,6 +48,8 @@ The flake exposes four fixture packages:
 | `fixture-demo-cpp-tar` | Archive source and patch overlay. |
 | `fixture-demo-nodbg` | Partial output without a debug output. |
 | `fixture-demo-rust` | Rust v0 names, DWARF function fallback, source. |
+| `fixture-demo-live` | Live attach, source, and frame selection. |
+| `fixture-demo-haskell` | GHC z-encoded names and Haskell source. |
 
 Build one with:
 
@@ -71,7 +78,8 @@ The script:
 4. Validates JSON against the schema.
 5. Checks frames, inline frames, source lines, module resolution, and gdb
    source listing.
-6. Tests `--offline`, stdin, caching, and the no-debug fixture.
+6. Tests `--offline`, stdin, caching, the no-debug fixture, live attach,
+   stack input, Haskell demangling, and source overrides.
 
 Core generation uses `gcore` first. If ptrace is unavailable, it falls back to
 a kernel core or `coredumpctl`. Set `NIX_SYM_REQUIRE_CORE=1` to make a missing
@@ -119,12 +127,33 @@ pins the same nixpkgs revision as hoard to reuse the local store and cache.
 The CI workflow runs:
 
 - `nix flake check`
+- `nix flake check --all-systems --no-build` for aarch64 evaluation
 - `nix build .#nix-sym`
 - `devenv test`
 - the integration script with `NIX_SYM_REQUIRE_CORE=1`
+- ASan and UBSan via `scripts/check-sanitize.sh`
+- libFuzzer via `scripts/check-fuzz.sh`
 - a format check with `clang-format --dry-run --Werror`
 
-Integration runs outside the Nix build sandbox so gdb and gcore are available.
+Integration runs outside the Nix build sandbox so gdb, gcore, and ptrace are
+available. The CI integration job runs on Ubuntu, where ptrace is permitted.
+
+## Debuginfod testing
+
+The debuginfod client has unit tests that need no network. To exercise the full
+path, start a server and force local resolution to fail:
+
+```sh
+nix run nixpkgs#nixseparatedebuginfod2 -- \
+  --listen-address 127.0.0.1:1949 \
+  --substituter local: --substituter https://cache.nixos.org
+
+nix-sym --core foreign.core --json --nix-bin /bin/false \
+  --debuginfod http://127.0.0.1:1949 --no-fetch
+```
+
+The server logs `/buildid/...` requests. A glibc core shows `debuginfod: true`
+on the glibc modules and source frames under `debuginfod-sources`.
 
 ## Style
 

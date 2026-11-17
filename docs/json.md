@@ -12,7 +12,7 @@ frames by index, and warnings by code and module.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `schema` | number | Always `1`. |
-| `tool` | object | `{"name": "nix-sym", "version": "0.1.0"}`. |
+| `tool` | object | `{"name": "nix-sym", "version": "0.2.0"}`. |
 | `status` | string | `complete` or `partial`. |
 | `core` | object | Core metadata. |
 | `modules` | array | Every module reported by libdwfl. |
@@ -41,6 +41,7 @@ frames by index, and warnings by code and module.
 | `name` | string | Module name from libdwfl. |
 | `build_id` | string or null | Hex build id. |
 | `status` | string | `resolved`, `missing-debug`, `missing-file`, `no-build-id`, `non-nix`, or `unknown`. |
+| `debuginfod` | boolean | The debug info came from a debuginfod server. |
 | `drv` | string or null | Derivation path. |
 | `debug_output` | string or null | Store path of the debug output. |
 | `debug_file` | string or null | The `.debug` file used by libdwfl. |
@@ -48,7 +49,7 @@ frames by index, and warnings by code and module.
 
 `source.kind` is `directory`, `archive`, or `none`. `source.path` is the value
 of the `.source` link. `source.overlay` is the `.sourceoverlay` directory.
-`source.status` is `available`, `resolved`, or an error status.
+`source.status` is `available`, `resolved`, `debuginfod`, `debuginfod-failed`, or an error status.
 
 ## threads and frames
 
@@ -96,15 +97,16 @@ Each warning has:
 Known codes include `no-build-id`, `debug-info-missing`,
 `debug-info-mismatch`, `module-file-missing`, `source-unavailable`,
 `source-generated-file`, `nix-unavailable`, `fetch-failed`,
-`relative-module-path`, `unsupported-arch`, `truncated-core`,
-`demangle-failed`, `inline-limit`, and `invalid-filter`.
+`debuginfod-failed`, `live-attach-failed`, `relative-module-path`,
+`unsupported-arch`, `truncated-core`, `demangle-failed`, `inline-limit`, and
+`invalid-filter`.
 
 ## Example
 
 ```json
 {
   "schema": 1,
-  "tool": { "name": "nix-sym", "version": "0.1.0" },
+  "tool": { "name": "nix-sym", "version": "0.2.0" },
   "status": "partial",
   "core": {
     "path": "/tmp/core.123",

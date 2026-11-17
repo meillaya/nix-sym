@@ -47,6 +47,7 @@
           "status": {
             "enum": ["resolved", "missing-debug", "missing-file", "no-build-id", "non-nix", "unknown"]
           },
+          "debuginfod": { "type": "boolean" },
           "drv": { "type": ["string", "null"] },
           "debug_output": { "type": ["string", "null"] },
           "debug_file": { "type": ["string", "null"] },

@@ -3,13 +3,17 @@
 #include <glob.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "process.hpp"
@@ -195,6 +199,7 @@ bool NixResolver::read_cache(const std::string& key, DebugResolution* out) {
   if (no_cache_ || refresh_) {
     return false;
   }
+  std::lock_guard<std::mutex> lock(cache_mutex_);
   std::string content;
   if (!read_file(cache_root_ + "/resolved/" + key + ".txt", &content)) {
     return false;
@@ -231,6 +236,8 @@ bool NixResolver::read_cache(const std::string& key, DebugResolution* out) {
       out->source_path = value;
     } else if (name == "overlay") {
       out->overlay_path = value;
+    } else if (name == "source_hint") {
+      out->source_hint = value;
     }
   }
   if (!any) {
@@ -246,6 +253,7 @@ void NixResolver::write_cache(const std::string& key, const DebugResolution& out
   if (no_cache_) {
     return;
   }
+  std::lock_guard<std::mutex> lock(cache_mutex_);
   std::string status;
   if (out.status == ModuleStatus::Resolved) {
     status = "resolved";
@@ -266,10 +274,12 @@ void NixResolver::write_cache(const std::string& key, const DebugResolution& out
   content << "debug_file=" << out.debug_file << "\n";
   content << "source=" << out.source_path << "\n";
   content << "overlay=" << out.overlay_path << "\n";
+  content << "source_hint=" << out.source_hint << "\n";
   write_file_atomic(cache_root_ + "/resolved/" + key + ".txt", content.str());
 }
 
 const std::vector<std::string>& NixResolver::load_substituters() {
+  std::lock_guard<std::mutex> lock(substituters_mutex_);
   if (substituters_loaded_) {
     return substituters_;
   }
@@ -351,7 +361,8 @@ std::string NixResolver::debug_file_for(const std::string& debug_output,
   return {};
 }
 
-DebugResolution NixResolver::resolve(const std::string& module_path, const std::string& build_id) {
+DebugResolution NixResolver::resolve_one(const std::string& module_path,
+                                         const std::string& build_id) {
   DebugResolution result;
   if (!is_store_path(module_path)) {
     result.status = ModuleStatus::NonNix;
@@ -482,9 +493,55 @@ DebugResolution NixResolver::resolve(const std::string& module_path, const std::
     result.warnings.insert(result.warnings.end(), warnings.begin(), warnings.end());
   }
 
+  if (result.source_path.empty() && !drv.empty()) {
+    std::string drv_text;
+    if (read_file(drv, &drv_text)) {
+      std::regex source_pattern("\\(\"src\",\"(/nix/store/[^\"]+)\"\\)");
+      std::smatch match;
+      if (std::regex_search(drv_text, match, source_pattern)) {
+        result.source_hint = match[1].str();
+      }
+    }
+  }
+
   result.status = ModuleStatus::Resolved;
   write_cache(key, result);
   return result;
+}
+
+DebugResolution NixResolver::resolve(const std::string& module_path, const std::string& build_id) {
+  return resolve_one(module_path, build_id);
+}
+
+std::vector<DebugResolution>
+NixResolver::resolve_batch(const std::vector<ModuleRequest>& requests) {
+  std::vector<DebugResolution> results(requests.size());
+  if (requests.empty()) {
+    return results;
+  }
+  if (requests.size() == 1) {
+    results[0] = resolve_one(requests[0].path, requests[0].build_id);
+    return results;
+  }
+  std::atomic<size_t> next{0};
+  size_t worker_count = std::min<size_t>(4, requests.size());
+  std::vector<std::thread> workers;
+  workers.reserve(worker_count);
+  for (size_t worker = 0; worker < worker_count; ++worker) {
+    workers.emplace_back([&]() {
+      while (true) {
+        size_t index = next.fetch_add(1);
+        if (index >= requests.size()) {
+          break;
+        }
+        results[index] = resolve_one(requests[index].path, requests[index].build_id);
+      }
+    });
+  }
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  return results;
 }
 
 } // namespace nix_sym

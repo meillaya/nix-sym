@@ -25,6 +25,8 @@ jobs:
             experimental-features = nix-command flakes
       - name: nix flake check
         run: nix flake check
+      - name: Evaluate all systems
+        run: nix flake check --all-systems --no-build
       - name: Build package
         run: nix build .#nix-sym
 
@@ -41,6 +43,32 @@ jobs:
             experimental-features = nix-command flakes
       - name: Integration tests
         run: nix develop --impure --command bash scripts/test-integration.sh
+
+  sanitize:
+    name: sanitizers / linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: ASan and UBSan
+        run: nix develop --impure --command bash scripts/check-sanitize.sh
+
+  fuzz:
+    name: fuzz / linux
+    runs-on: ubuntu-24.04
+    env:
+      FUZZ_SECONDS: "20"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Demangler and JSON fuzz targets
+        run: nix develop --impure --command bash scripts/check-fuzz.sh
 
   format:
     name: format / linux

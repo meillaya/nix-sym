@@ -7,8 +7,12 @@
 - Linux ELF core dumps only.
 - x86_64 and aarch64 are the target architectures. A core from a different
   architecture from the host is not supported.
-- Live process attach is not implemented. Use `eu-stack -p`, `gdb -p`, or
-  `perf` for a running process.
+- `--pid` requires ptrace permission and a dumpable process. Kernel Yama
+  settings, container seccomp policies, and process ownership can block it.
+  Use `eu-stack -p` or `gdb -p` when the tool cannot attach.
+- `--stack` uses link-time addresses. The caller must subtract the module load
+  base from a runtime PC. It symbolizes only the addresses supplied; it does
+  not unwind or read memory.
 - Kernel core dumps, vmcore files, and non-ELF crash formats are not supported.
 - macOS and Windows are not supported.
 
@@ -33,7 +37,11 @@
   without a debug output produces frames with ELF symbols only.
 - A cross-machine core is limited by what the local Nix can resolve. A store
   path that is not in the local store or a configured cache cannot be mapped
-  to its derivation. A debuginfod client fallback is planned, not implemented.
+  to its derivation. Enable a debuginfod server with `--debuginfod URL` or
+  `DEBUGINFOD_URLS` to fetch debug info by build id.
+- Debuginfod is a network service. A server may lack the build id or source
+  path, or be unreachable. `--no-debuginfod` disables debuginfod and
+  `--offline` disables both Nix fetches and debuginfod.
 - A collected store path can leave a core with a module that no longer exists.
   The tool continues and reports the module.
 
@@ -87,8 +95,9 @@ compiler recorded, not a guarantee about the executing source line.
 
 ## gdb
 
-- The generated gdb init disables debuginfod for that session. If you rely on
-  a debuginfod server, edit the generated file or use gdb directly.
+- The generated gdb init disables debuginfod for that session and relies on the
+  source mirror that `nix-sym` builds. If you rely on a debuginfod server for
+  files outside that mirror, edit the generated file or use gdb directly.
 - Paths containing spaces are skipped in the gdb script with a comment. Nix
   store paths do not contain spaces; a custom cache directory might.
 - The script points at the cache's decompressed core. Deleting the cache breaks

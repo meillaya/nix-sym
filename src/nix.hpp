@@ -1,11 +1,17 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "model.hpp"
 
 namespace nix_sym {
+
+struct ModuleRequest {
+  std::string path;
+  std::string build_id;
+};
 
 struct DebugResolution {
   ModuleStatus status = ModuleStatus::Unknown;
@@ -25,6 +31,7 @@ public:
   ~NixResolver() = default;
 
   DebugResolution resolve(const std::string& module_path, const std::string& build_id);
+  std::vector<DebugResolution> resolve_batch(const std::vector<ModuleRequest>& requests);
   const std::vector<std::string>& substituters();
 
 private:
@@ -38,6 +45,10 @@ private:
   bool no_cache_;
   std::vector<std::string> substituters_;
   bool substituters_loaded_ = false;
+  std::mutex cache_mutex_;
+  std::mutex substituters_mutex_;
+
+  DebugResolution resolve_one(const std::string& module_path, const std::string& build_id);
 
   std::string cache_key(const std::string& module_path, const std::string& build_id) const;
   bool read_cache(const std::string& key, DebugResolution* out);

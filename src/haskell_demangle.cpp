@@ -55,14 +55,14 @@ bool ends_with(std::string_view value, std::string_view suffix) {
 // decoding the function part.
 enum class ZContext { Module, Name };
 
-std::optional<char> decode_lower_escape(char escape, ZContext context) {
+std::optional<char> decode_lower_escape(char escape, ZContext /*context*/) {
   switch (escape) {
   case 'd':
-    return '.';
+    return '$';
   case 'c':
     return ':';
   case 'i':
-    return context == ZContext::Module ? '.' : '#';
+    return '.';
   case 'm':
     return '-';
   case 'p':

@@ -13,6 +13,8 @@ struct UsageError : std::runtime_error {
 struct Options {
   std::string core;
   std::string coredumpctl_pid;
+  std::string pid;
+  std::string stack;
   bool json = false;
   bool bt = false;
   bool gdb_init = false;
@@ -30,6 +32,9 @@ struct Options {
   bool refresh = false;
   bool no_cache = false;
   std::vector<std::string> debug_dirs;
+  std::vector<std::string> debuginfod_urls;
+  bool no_debuginfod = false;
+  std::vector<std::string> source_dirs;
   std::vector<int> threads;
   int max_frames = 256;
   std::string filter;

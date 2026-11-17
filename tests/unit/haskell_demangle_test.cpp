@@ -57,7 +57,7 @@ int main() {
 
   // Module paths, package qualifiers, and nested modules.
   CHECK_DEMANGLED("DataziList_map_info", "Data.List.map");
-  CHECK_DEMANGLED("DatazdList_map_info", "Data.List.map");
+  CHECK_DEMANGLED("Main_zdwleaf_info", "Main.$wleaf");
   CHECK_DEMANGLED("DataziMapziInternal_lookup_info", "Data.Map.Internal.lookup");
   CHECK_DEMANGLED("DataziListziInternal_lookup_info", "Data.List.Internal.lookup");
   CHECK_DEMANGLED("base_GHCziIO_putStrLn_info", "GHC.IO.putStrLn");
@@ -71,14 +71,14 @@ int main() {
 
   // Suffixless symbols are accepted when the module path is z-encoded.
   CHECK_DEMANGLED("DataziList_map", "Data.List.map");
-  CHECK_DEMANGLED("DatazdList_map", "Data.List.map");
+  CHECK_DEMANGLED("DataziList_map", "Data.List.map");
   CHECK_DEMANGLED("GHCziIO_putStrLn", "GHC.IO.putStrLn");
   CHECK_DEMANGLED("base_GHCziIO_putStrLn", "GHC.IO.putStrLn");
 
   // Lower-case z escapes.
-  CHECK_DEMANGLED("Foo_barzd_info", "Foo.bar.");
+  CHECK_DEMANGLED("Foo_barzd_info", "Foo.bar$");
   CHECK_DEMANGLED("Foo_barzc_info", "Foo.bar:");
-  CHECK_DEMANGLED("Foo_barzi_info", "Foo.bar#");
+  CHECK_DEMANGLED("Foo_barzi_info", "Foo.bar.");
   CHECK_DEMANGLED("Foo_barzm_info", "Foo.bar-");
   CHECK_DEMANGLED("Foo_barzp_info", "Foo.bar+");
   CHECK_DEMANGLED("Foo_barzq_info", "Foo.bar?");

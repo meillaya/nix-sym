@@ -1,7 +1,7 @@
 CXX ?= g++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Wpedantic
-CPPFLAGS += -Isrc $(shell pkg-config --cflags libdw libelf libzstd libarchive)
-LDLIBS += $(shell pkg-config --libs libdw libelf libzstd libarchive)
+CPPFLAGS += -Isrc $(shell pkg-config --cflags libdw libelf libzstd libarchive libdebuginfod)
+LDLIBS += $(shell pkg-config --libs libdw libelf libzstd libarchive libdebuginfod) -pthread
 
 SRC := $(filter-out src/main.cpp,$(wildcard src/*.cpp))
 OBJ := $(patsubst src/%.cpp,build/%.o,$(SRC))
@@ -10,9 +10,11 @@ BIN := build/nix-sym
 UNIT_TEST := build/unit_tests
 RUST_TEST := build/rust_demangle_test
 HASKELL_TEST := build/haskell_demangle_test
-TESTS := $(UNIT_TEST) $(RUST_TEST) $(HASKELL_TEST)
+DEBUGINFOD_TEST := build/debuginfod_test
+STACK_TEST := build/stack_test
+TESTS := $(UNIT_TEST) $(RUST_TEST) $(HASKELL_TEST) $(DEBUGINFOD_TEST) $(STACK_TEST)
 
-.PHONY: all check test install clean format
+.PHONY: all check test install clean format sanitize fuzz
 
 all: $(BIN) $(TESTS)
 
@@ -37,10 +39,18 @@ $(RUST_TEST): tests/unit/rust_demangle_test.cpp src/rust_demangle.cpp | build
 $(HASKELL_TEST): tests/unit/haskell_demangle_test.cpp src/haskell_demangle.cpp | build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
+$(DEBUGINFOD_TEST): tests/unit/debuginfod_test.cpp src/debuginfod.cpp | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -ldebuginfod -o $@
+
+$(STACK_TEST): tests/unit/stack_test.cpp src/stack.cpp | build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
+
 check: all
 	./$(UNIT_TEST)
 	./$(RUST_TEST)
 	./$(HASKELL_TEST)
+	./$(DEBUGINFOD_TEST)
+	./$(STACK_TEST)
 
 test: check
 
@@ -49,6 +59,12 @@ install: $(BIN)
 
 format:
 	clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/unit/*.cpp
+
+sanitize:
+	bash scripts/check-sanitize.sh
+
+fuzz:
+	bash scripts/check-fuzz.sh
 
 clean:
 	rm -rf build

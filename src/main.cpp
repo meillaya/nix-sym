@@ -1,10 +1,12 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -12,11 +14,13 @@
 
 #include "cli.hpp"
 #include "core_reader.hpp"
+#include "debuginfod.hpp"
 #include "dwfl_session.hpp"
 #include "gdb.hpp"
 #include "json.hpp"
 #include "nix.hpp"
 #include "source.hpp"
+#include "stack.hpp"
 
 namespace nix_sym {
 namespace {
@@ -74,6 +78,9 @@ void print_modules_text(const Backtrace& backtrace) {
     if (!module.build_id.empty()) {
       std::cout << "\tbuild-id " << module.build_id;
     }
+    if (module.debuginfod) {
+      std::cout << "\tdebuginfod";
+    }
     if (!module.debug_output.empty()) {
       std::cout << "\tdebug " << module.debug_output;
     }
@@ -103,26 +110,44 @@ int run(int argc, char** argv) {
   }
   std::filesystem::create_directories(cache, ec);
 
-  CoreFile core = open_core_file(options.core, cache, options.coredumpctl_pid);
-  CoreInfo core_info = read_core_info(core);
-
   NixResolver resolver(options.nix_bin, cache, options.fetch, options.offline,
                        options.build_missing, options.refresh, options.no_cache);
+  bool debuginfod_disabled = options.offline || options.no_debuginfod;
+  DebuginfodClient debuginfod(cache, options.debuginfod_urls, debuginfod_disabled);
   bool materialize = options.extract_sources || (options.gdb_init && !options.no_extract);
-  SourceResolver sources(cache, materialize, options.verbose > 1);
+  SourceResolver sources(cache, materialize, options.verbose > 1, options.source_dirs, &debuginfod);
 
-  Backtrace backtrace = symbolize_core(options, core, resolver, sources);
-  backtrace.core.path = core_info.path;
-  backtrace.core.compressed = core_info.compressed;
-  if (backtrace.core.pid <= 0) {
-    backtrace.core.pid = core_info.pid;
-  }
-  if (!core_info.exe.empty()) {
-    backtrace.core.exe = core_info.exe;
-  }
-  if (core_info.signal != 0) {
-    backtrace.core.signal = core_info.signal;
-    backtrace.core.signal_name = core_info.signal_name;
+  Backtrace backtrace;
+  bool live = false;
+  std::string gdb_core;
+  if (!options.pid.empty()) {
+    live = true;
+    backtrace = symbolize_pid(options, std::stoi(options.pid), resolver, sources, &debuginfod);
+  } else if (!options.stack.empty()) {
+    std::vector<StackRecord> records = read_stack_file(options.stack);
+    if (records.empty()) {
+      throw std::runtime_error("stack file contains no addresses: " + options.stack);
+    }
+    backtrace = symbolize_stack(options, records, resolver, sources, &debuginfod);
+  } else {
+    CoreFile core = open_core_file(options.core, cache, options.coredumpctl_pid);
+    CoreInfo core_info = read_core_info(core);
+    backtrace = symbolize_core(options, core, resolver, sources, &debuginfod);
+    backtrace.core.path = core_info.path;
+    backtrace.core.compressed = core_info.compressed;
+    if (backtrace.core.pid <= 0) {
+      backtrace.core.pid = core_info.pid;
+    }
+    if (!core_info.exe.empty()) {
+      backtrace.core.exe = core_info.exe;
+    }
+    if (core_info.signal != 0) {
+      backtrace.core.signal = core_info.signal;
+      backtrace.core.signal_name = core_info.signal_name;
+    }
+    if (options.gdb_init) {
+      gdb_core = core.temp_path.empty() ? core.path : persistent_core(cache, core);
+    }
   }
 
   if (options.list_modules) {
@@ -147,8 +172,7 @@ int run(int argc, char** argv) {
   }
 
   if (options.gdb_init) {
-    std::string gdb_core = core.temp_path.empty() ? core.path : persistent_core(cache, core);
-    std::string content = render_gdb_init(backtrace, gdb_core, sources.mappings());
+    std::string content = render_gdb_init(backtrace, gdb_core, sources.mappings(), live);
     if (options.gdb_init_path == "-") {
       std::cout << content;
     } else {

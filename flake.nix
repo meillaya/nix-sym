@@ -22,13 +22,13 @@
         "aarch64-linux"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      version = "0.1.0";
+      version = "0.2.0";
 
       mkDemoCpp =
         pkgs: src: separate:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-cpp";
-          version = "0.1.0";
+          version = "0.2.0";
           inherit src;
           separateDebugInfo = separate;
           postPatch = ''
@@ -46,13 +46,44 @@
         pkgs:
         pkgs.stdenv.mkDerivation {
           pname = "nix-sym-demo-rust";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./fixtures/demo-rust;
           nativeBuildInputs = [ pkgs.rustc ];
           separateDebugInfo = true;
           buildPhase = ''
             rustc --edition 2021 -C opt-level=2 -C debuginfo=2 -C strip=none \
               -C link-arg=-Wl,--build-id=sha1 -o demo src/main.rs
+          '';
+          installPhase = ''
+            install -Dm755 demo $out/bin/demo
+          '';
+        };
+
+      mkDemoLive =
+        pkgs:
+        pkgs.stdenv.mkDerivation {
+          pname = "nix-sym-demo-live";
+          version = "0.2.0";
+          src = ./fixtures/demo-live;
+          separateDebugInfo = true;
+          buildPhase = ''
+            c++ -O2 -g -fno-omit-frame-pointer -std=c++20 -o demo src/main.cpp
+          '';
+          installPhase = ''
+            install -Dm755 demo $out/bin/demo
+          '';
+        };
+
+      mkDemoHaskell =
+        pkgs:
+        pkgs.stdenv.mkDerivation {
+          pname = "nix-sym-demo-haskell";
+          version = "0.2.0";
+          src = ./fixtures/demo-haskell;
+          nativeBuildInputs = [ pkgs.ghc ];
+          separateDebugInfo = true;
+          buildPhase = ''
+            ghc -O1 -g -optl-Wl,--build-id=sha1 -o demo Main.hs
           '';
           installPhase = ''
             install -Dm755 demo $out/bin/demo
@@ -99,6 +130,8 @@
         fixture-demo-cpp-tar = mkDemoCpp pkgs ./fixtures/demo-cpp.tar.gz true;
         fixture-demo-nodbg = mkDemoCpp pkgs ./fixtures/demo-cpp false;
         fixture-demo-rust = mkDemoRust pkgs;
+        fixture-demo-live = mkDemoLive pkgs;
+        fixture-demo-haskell = mkDemoHaskell pkgs;
       });
 
       apps = forAllSystems (pkgs: {

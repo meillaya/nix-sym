@@ -7,9 +7,12 @@
   packages = with pkgs; [
     binutils
     cacert
+    clang
     clang-tools
+    coreutils
     curl
     elfutils
+    elfutils.bin
     file
     gcc
     gdb

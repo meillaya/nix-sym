@@ -27,12 +27,24 @@ nix build .#nix-sym
 Use it when the compressed core is owned by `systemd-coredump` and not readable
 directly.
 
+`--pid PID` attaches to a live process. The process must be dumpable and the
+caller must have ptrace permission. The process is stopped while frames are
+read and resumed when the command exits.
+
+`--stack FILE` reads a list of module-relative addresses from a file or from
+stdin with `-`. The format is `MODULE ADDRESS [BUILD-ID]` per line; a line with
+only an address reuses the previous module. Addresses are link-time addresses,
+so subtract the module load base from a runtime PC first.
+
 ```sh
 coredumpctl list
 nix-sym --from-coredumpctl 12345 --json
+nix-sym --pid 12345 --json
+nix-sym --stack addresses.txt --json
 ```
 
-Exactly one of `--core` and `--from-coredumpctl` is required.
+Exactly one of `--core`, `--from-coredumpctl`, `--pid`, and `--stack` is
+required.
 
 ## Backtrace output
 
@@ -55,6 +67,8 @@ Selection flags:
 | `--no-inline` | Do not print inline frames. |
 | `--no-demangle` | Keep the raw symbol names. |
 | `--strict` | Exit 2 when the result is partial. |
+| `--pid PID` | Attach to a live process. |
+| `--stack FILE` | Symbolize module-relative addresses. |
 
 ## JSON
 
@@ -96,15 +110,29 @@ By default `nix-sym` resolves debug outputs from the local store and fetches
 missing ones from the substituters in `nix config show substituters`:
 
 ```sh
-nix-sym --core core.123 --json            # may fetch debug outputs
-nix-sym --core core.123 --json --no-fetch # local store only
-nix-sym --core core.123 --json --offline  # alias for no network
-nix-sym --core core.123 --build-missing   # allow nix-store --realise
+nix-sym --core core.123 --json             # may fetch Nix and debuginfod data
+nix-sym --core core.123 --json --no-fetch  # local store, debuginfod still on
+nix-sym --core core.123 --json --offline   # no Nix fetch and no debuginfod
+nix-sym --core core.123 --build-missing    # allow nix-store --realise
 ```
 
 The tool never rebuilds a package unless `--build-missing` is given. If a
 substituter does not have the debug output, the module is reported as
 `missing-debug` and the rest of the backtrace is still printed.
+
+For a core from another machine, add a debuginfod URL:
+
+```sh
+nix-sym --core foreign.core --debuginfod http://127.0.0.1:1949 --json
+nix-sym --core foreign.core --json            # uses DEBUGINFOD_URLS
+nix-sym --core foreign.core --no-debuginfod   # ignore the environment
+```
+
+The server is asked by build id after local store and cache resolution fail.
+`nixseparatedebuginfod2`, system debuginfod servers, and CachyOS or Arch
+debuginfod servers all work. The client cache is under
+`$XDG_CACHE_HOME/nix-sym/debuginfod-client`. Source files fetched from a server
+are mirrored under `debuginfod-sources` for gdb.
 
 `nix copy` verifies cache signatures. An unsigned file cache needs a trusted
 public key in `trusted-public-keys`, or `require-sigs = false` in the Nix
@@ -113,6 +141,16 @@ checks.
 
 `--debug-dir DIR` adds a debug file directory for modules that are not in the
 Nix store. Repeat the flag for several directories.
+
+`--source-dir PREFIX=DIR` maps a DWARF source prefix to a local directory. It
+handles Rust standard library paths and local source checkouts:
+
+```sh
+nix-sym --core core.123 --json --source-dir /rustc/58cf8f9c=/path/to/rust-src
+```
+
+Repeat the flag for several mappings. The mapping is also emitted as a gdb
+`substitute-path` line.
 
 `--nix-bin PATH` points at the Nix executable. The tool derives the matching
 `nix-store` path from it, or falls back to `nix-store` on `PATH`.
@@ -193,3 +231,14 @@ normal when a patched source tree is reconstructed.
 
 **`--from-coredumpctl` finds no entry**: Use the exact PID from
 `coredumpctl list`, or dump the core first and pass `--core`.
+
+**`--pid` fails with ptrace errors**: Check `kernel.yama.ptrace_scope`, the
+process dumpable flag, and whether the caller is the process owner. Some
+container runtimes block ptrace.
+
+**Debuginfod returns 404 or a timeout**: Check that the URL is reachable and
+that the server has the build id. Try `--no-debuginfod` to see the local
+result. The debuginfod client cache is under the nix-sym cache.
+
+**Live source paths point at `/usr/src/debug`**: That is the system debuginfo
+package. Use `--source-dir` or a debuginfod server that provides source.

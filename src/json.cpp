@@ -89,7 +89,7 @@ std::string render_json(const Backtrace& backtrace) {
   std::ostringstream out;
   out << "{\n";
   out << "  \"schema\": 1,\n";
-  out << "  \"tool\": {\"name\": \"nix-sym\", \"version\": \"0.1.0\"},\n";
+  out << "  \"tool\": {\"name\": \"nix-sym\", \"version\": \"0.2.0\"},\n";
   out << "  \"status\": " << quote(backtrace.partial ? "partial" : "complete") << ",\n";
 
   out << "  \"core\": {\n";
@@ -113,6 +113,7 @@ std::string render_json(const Backtrace& backtrace) {
     out << "      \"build_id\": " << (module.build_id.empty() ? "null" : quote(module.build_id))
         << ",\n";
     out << "      \"status\": " << quote(module_status_name(module.status)) << ",\n";
+    out << "      \"debuginfod\": " << (module.debuginfod ? "true" : "false") << ",\n";
     out << "      \"drv\": " << (module.drv_path.empty() ? "null" : quote(module.drv_path))
         << ",\n";
     out << "      \"debug_output\": "

@@ -65,6 +65,10 @@ Options parse_cli(int argc, char** argv) {
       options.core = take(name);
     } else if (name == "--from-coredumpctl") {
       options.coredumpctl_pid = take(name);
+    } else if (name == "--pid") {
+      options.pid = take(name);
+    } else if (name == "--stack") {
+      options.stack = take(name);
     } else if (name == "--json") {
       options.json = true;
     } else if (name == "--bt") {
@@ -101,6 +105,12 @@ Options parse_cli(int argc, char** argv) {
       options.no_cache = true;
     } else if (name == "--debug-dir") {
       options.debug_dirs.push_back(take(name));
+    } else if (name == "--debuginfod") {
+      options.debuginfod_urls.push_back(take(name));
+    } else if (name == "--no-debuginfod") {
+      options.no_debuginfod = true;
+    } else if (name == "--source-dir") {
+      options.source_dirs.push_back(take(name));
     } else if (name == "--thread") {
       options.threads.push_back(parse_int(take(name), name));
     } else if (name == "--max-frames") {
@@ -137,8 +147,33 @@ Options parse_cli(int argc, char** argv) {
   if (options.help || options.version) {
     return options;
   }
-  if (options.core.empty() == options.coredumpctl_pid.empty()) {
-    throw UsageError("exactly one of --core or --from-coredumpctl is required");
+  int input_count = 0;
+  input_count += options.core.empty() ? 0 : 1;
+  input_count += options.coredumpctl_pid.empty() ? 0 : 1;
+  input_count += options.pid.empty() ? 0 : 1;
+  input_count += options.stack.empty() ? 0 : 1;
+  if (input_count != 1) {
+    throw UsageError("exactly one of --core, --from-coredumpctl, --pid, or --stack is required");
+  }
+  if (!options.pid.empty()) {
+    try {
+      size_t consumed = 0;
+      long parsed = std::stol(options.pid, &consumed, 10);
+      if (consumed != options.pid.size() || parsed <= 0) {
+        throw std::invalid_argument("bad pid");
+      }
+      options.pid = std::to_string(parsed);
+    } catch (const std::exception&) {
+      throw UsageError("invalid --pid: " + options.pid);
+    }
+  }
+  if (!options.stack.empty() && options.gdb_init) {
+    throw UsageError("--gdb-init is not supported with --stack");
+  }
+  for (const auto& mapping : options.source_dirs) {
+    if (mapping.find('=') == std::string::npos || mapping.front() == '=' || mapping.back() == '=') {
+      throw UsageError("--source-dir requires PREFIX=DIR");
+    }
   }
   if (options.gdb_init && options.gdb_init_path.empty()) {
     throw UsageError("--gdb-init requires a path or -");
@@ -194,7 +229,7 @@ void print_usage(const char* argv0) {
 }
 
 void print_version() {
-  std::cout << "nix-sym 0.1.0\n";
+  std::cout << "nix-sym 0.2.0\n";
 }
 
 } // namespace nix_sym

@@ -1,0 +1,9 @@
+_RNvNtCs1234_7mycrate3foo3bar
+_RINvNtC3std3mem8align_ofjE
+_RNvNtNtCs8meDrTSUyFO_3std3sys3pal4unix14abort_internal
+Main_main_info
+DataziList_map_info
+base_GHCziIO_putStrLn_info
+_ZN3foo3barEv
+_Z3foov@@GLIBC_2.2.5
+_ZN4core3fmt5write17h0123456789abcdefE

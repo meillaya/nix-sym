@@ -65,6 +65,7 @@ struct ModuleInfo {
   std::string source_status = "unavailable";
   ModuleStatus status = ModuleStatus::Unknown;
   bool resolved = false;
+  bool debuginfod = false;
 };
 
 struct ThreadInfo {
